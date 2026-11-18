@@ -12,7 +12,7 @@
 ## Script skeleton (fallback)
 
 ```python
-# Build <name>. Run: blender --background --python models/<name>.py
+# Build <name>. Run: blender --background --python models/<name>/<name>.py
 import bpy, os
 
 # --- Parameters (mm) ---

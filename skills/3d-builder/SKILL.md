@@ -1,20 +1,41 @@
 ---
 name: 3d-builder
-description: Spec-driven creation and editing of 3D models in Blender or FreeCAD. Writes a spec file in specs/, asks clarifying questions one at a time, records every decision and assumption, then builds the model via a Blender/FreeCAD MCP server or a generated Python script and saves it to models/. Use whenever the user wants a 3D model, part, object, enclosure, bracket, holder, mount, case, prop, mesh or CAD design created or changed - even if they don't mention Blender, FreeCAD or "3D" explicitly (e.g. "design a wall mount for my router", "make the hook 5 mm thicker", "I need a printable box for an Arduino", "a low-poly crate for my Godot game"). Also for assets meant for games or the web (exports .glb/.fbx for three.js, Unity, Unreal, Godot). Not for writing engine or scene code, questions about 3D concepts, or rendering-only tasks on an existing scene.
+description: Spec-driven creation and editing of 3D models in Blender or FreeCAD. Keeps everything for one model together in models/<name>/. Writes a spec file there, asks clarifying questions one at a time, records every decision and assumption, for buildings discusses the floor plan and draws an SVG plan per floor for approval, then builds the model via a Blender/FreeCAD MCP server or a generated Python script and saves it in the same folder. Use whenever the user wants a 3D model, part, object, enclosure, bracket, holder, mount, case, prop, mesh, CAD design or building (house, cabin, office, game level with rooms) created or changed - even if they don't mention Blender, FreeCAD or "3D" explicitly (e.g. "design a wall mount for my router", "make the hook 5 mm thicker", "I need a printable box for an Arduino", "a low-poly crate for my Godot game", "model a two-storey house with three bedrooms", "move the kitchen wall 1 m east"). Also for assets meant for games or the web (exports .glb/.fbx for three.js, Unity, Unreal, Godot). Not for writing engine or scene code, questions about 3D concepts, or rendering-only tasks on an existing scene.
 ---
 
 # 3d-builder
 
 Don't guess at a 3D model. Write down what will be built, clear up what's ambiguous with the user, record every assumption, and only then model it. A model built on guessed dimensions gets corrected over and over; a spec catches the guesses before they become geometry.
 
-The workflow has three phases, always in this order: **spec → questions → model**. Don't open Blender or FreeCAD, and don't write modelling code, before the spec exists and the questions are done.
+The workflow has these phases, always in this order: **spec → questions → floor plans (buildings only) → model**. Don't open Blender or FreeCAD, and don't write modelling code, before the spec exists and the questions are done. For a building, the user must also have approved the floor plans first.
+
+## Project layout
+
+A project can hold several models, so everything that belongs to one model lives in its own folder:
+
+```
+models/
+  <name>/
+    specs/
+      <yyyy-mm-dd-hhmmss>-<request>.md   # one spec per request
+    plans/                               # buildings only
+      layout.json
+      floor-<id>.svg
+    <name>.blend | <name>.FCStd          # the model
+    <name>.py                            # script fallback only
+    <name>.glb | <name>.fbx              # game/web exports only
+.3d-builder.json                         # remembered tool choice, for the whole project
+```
+
+`<name>` is a short kebab-case name for the object (`phone-holder`, `router-wall-mount`). It names the folder and the model files. All paths below are relative to `models/<name>/` unless they say otherwise.
+
+**Older projects** may still use the previous flat layout (`specs/` and `plans/` at the project root, `models/<name>.blend`). If you find one, work with it as it is and offer once to move the files into this structure. Don't move anything without asking.
 
 ## Phase 1: Write the spec
 
-1. Create `specs/` in the project root if it doesn't exist.
+1. Pick the model's `<name>`. For a new model, check that `models/<name>/` doesn't exist yet, then create it and its `specs/` folder.
 2. Get the timestamp from the system clock (e.g. `date +%Y-%m-%d-%H%M%S`) rather than inventing one.
-3. Pick a short kebab-case name for the object (`phone-holder`, `router-wall-mount`). Reuse the same name for the model file later.
-4. Create `specs/<yyyy-mm-dd-hhmmss>-<name>.md` using the template in [references/spec-template.md](references/spec-template.md).
+3. Create `specs/<yyyy-mm-dd-hhmmss>-<request>.md` using the template in [references/spec-template.md](references/spec-template.md). `<request>` is a short kebab-case label for this request: `initial` for a new model, or the change for an edit (`thicker-hook`, `move-kitchen-wall`).
 
 Fill in what the request already states, then list the open points: everything that affects the geometry but wasn't specified. Typical open points:
 
@@ -25,8 +46,9 @@ Fill in what the request already states, then list the open points: everything t
 - Purpose and manufacturing (3D printing → overhangs, minimum walls, flat base; CNC; render-only; game/web asset)
 - For game/web assets: target engine, polygon budget, scale in engine units, pivot position, UVs and textures vs. plain colours, LODs, collision mesh
 - Level of detail, materials (Blender), parametric needs (FreeCAD)
+- For buildings: floors, footprint, rooms and their sizes, stairs, doors and windows. These get settled in Phase 3 with the floor plans, so list them there and not here
 
-**Editing an existing model:** look in `specs/` and `models/` for the object first. Write a new spec for the change (each request gets its own file, so the history stays readable), link it to the previous spec, and state what changes and what must stay the same. Read the existing model (via MCP, or the script that built it) before editing, so the edit starts from what's actually there.
+**Editing an existing model:** find the object's folder in `models/` first. Write a new spec for the change (each request gets its own file, so the history stays readable), link it to the previous spec, and state what changes and what must stay the same. Read the existing model (via MCP, or the script that built it) before editing, so the edit starts from what's actually there. For a building with a `plans/` folder, a layout change goes through the plans first (Phase 3, "Editing a building").
 
 ## Phase 2: Clarifying questions
 
@@ -45,9 +67,19 @@ Stop when nothing important is left unclear, or when the user stops answering. F
 
 If the request is already fully specified, skip the questions and say so in one line.
 
-## Phase 3: Model
+## Phase 3: Floor plans (buildings only)
 
-Save the result to `models/<name>.blend` (Blender) or `models/<name>.FCStd` (FreeCAD). Create `models/` if needed. For a game or web asset, also export it next to the source file (see [Export for engines](#export-for-engines)).
+If the model is a building or has rooms, settle the layout on paper before modelling. Read [references/floorplans.md](references/floorplans.md) and follow it:
+
+1. **Discuss the floor plan** with the user, using the question rules above: floors, footprint, rooms, adjacency, stairs, doors and windows.
+2. **Draw a vector plan for each floor.** Write `plans/layout.json` and generate `plans/floor-<id>.svg` with the bundled [scripts/draw_plans.py](scripts/draw_plans.py).
+3. **Review the plans with the user** and revise them until the user approves. Record the approval in **Decisions**.
+
+The approved `layout.json` is the source of truth for the model's walls, openings, rooms and stairs. Skip this phase for anything that isn't a building.
+
+## Phase 4: Model
+
+Save the result to `<name>.blend` (Blender) or `<name>.FCStd` (FreeCAD) in the model's folder. For a game or web asset, also export it next to the source file (see [Export for engines](#export-for-engines)).
 
 ### Choose the tool
 
@@ -66,12 +98,12 @@ Check which MCP servers are configured: look at your available tools for Blender
 
 ### Script fallback
 
-When no MCP server is usable, write a standalone Python script, `models/<name>.py`, that builds the model from scratch and saves it to `models/<name>.blend` or `models/<name>.FCStd`. Put the key dimensions as named constants at the top so the user can tweak them.
+When no MCP server is usable, write a standalone Python script, `<name>.py` in the model's folder, that builds the model from scratch and saves `<name>.blend` or `<name>.FCStd` next to itself. Put the key dimensions as named constants at the top so the user can tweak them. For a building, the script reads `plans/layout.json` and doesn't copy the coordinates into the code (see [references/floorplans.md](references/floorplans.md), "Build the model from the layout").
 
 Then try to run it headless, if the tool is installed:
 
-- Blender: `blender --background --python models/<name>.py`
-- FreeCAD: `freecadcmd models/<name>.py` (on some systems `FreeCADCmd` or `freecad.cmd`)
+- Blender: `blender --background --python models/<name>/<name>.py`
+- FreeCAD: `freecadcmd models/<name>/<name>.py` (on some systems `FreeCADCmd` or `freecad.cmd`)
 
 If it runs, check the output (file exists, printed bounding box matches the spec). If it fails, fix the script and rerun. If the tool isn't on the PATH, tell the user the exact command to run.
 
@@ -83,8 +115,8 @@ Only for game or web assets. Keep the `.blend` as the editable source and export
 
 | Target | Format | File |
 |---|---|---|
-| Web (three.js, Babylon.js), Godot, general use | glTF binary | `models/<name>.glb` |
-| Unity, Unreal | FBX (or `.glb` if the user's pipeline imports glTF) | `models/<name>.fbx` |
+| Web (three.js, Babylon.js), Godot, general use | glTF binary | `<name>.glb` |
+| Unity, Unreal | FBX (or `.glb` if the user's pipeline imports glTF) | `<name>.fbx` |
 
 Engines are real-time, so the asset has to respect the spec's budget: check the triangle count, apply transforms, put the pivot where the spec says, and match the engine's scale and axes. Export settings and pitfalls: the "Game and web assets" section in [references/blender.md](references/blender.md).
 
@@ -92,8 +124,8 @@ This skill delivers the asset file. Loading it into a scene, writing engine scri
 
 ### Finish
 
-1. Verify the model against the spec: overall dimensions, every listed feature present, and any fit or clearance requirements. For game/web assets, also the triangle count against the budget and the exported file's bounding box in engine units.
-2. Update the spec: set **Status** to `done`, fill in **Output** (file paths including exports, tool, MCP or script), and note anything that turned out different from the plan.
+1. Verify the model against the spec: overall dimensions, every listed feature present, and any fit or clearance requirements. For game/web assets, also the triangle count against the budget and the exported file's bounding box in engine units. For buildings, also check against the approved plans: overall dimensions, wall positions, every door and window, and floor levels.
+2. Update the spec: set **Status** to `done`, fill in **Output** (file paths including exports and plans, tool, MCP or script), and note anything that turned out different from the plan.
 3. Report to the user briefly: what was built, where the files are, and the main assumptions they may want to revisit (point to the spec for the rest).
 
 If the user asks for changes after that, treat them as a new edit request (Phase 1, "Editing an existing model"). Small follow-ups in the same conversation ("a bit thicker") can go in the same spec under **Revisions** instead.

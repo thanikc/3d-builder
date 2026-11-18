@@ -13,7 +13,7 @@
 ## Script skeleton (fallback)
 
 ```python
-# Build <name>. Run: freecadcmd models/<name>.py
+# Build <name>. Run: freecadcmd models/<name>/<name>.py
 import os
 import FreeCAD as App
 import Part
