@@ -1,0 +1,7 @@
+schema_version: "1.1"
+name: freecad-bracket-fully-specified
+expected_outcome: |
+  A spec at models/<name>/specs/<timestamp>-initial.md written before any modelling code, no clarifying questions
+  (the request is complete), a FreeCAD Part script models/<name>/<name>.py with the dimensions as named constants,
+  saving <name>.FCStd next to itself, run headless with freecadcmd or the exact command given to the user,
+  .3d-builder.json set to freecad, and the spec marked done with Output filled in.

@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: freecad-edit-thicker-hook
+expected_outcome: |
+  Editing an existing model: the agent finds models/wall-hook/, reads the previous spec and wall-hook.py, writes a new
+  spec specs/<timestamp>-thicker-hook.md linked to the previous one with Changes and Must stay the same lists, uses
+  FreeCAD from .3d-builder.json without asking, changes only the hook thickness constant (6 -> 11 mm) in the script,
+  reruns or gives the command, and marks the new spec done.
+context:
+  scaffold_script: place-files.sh

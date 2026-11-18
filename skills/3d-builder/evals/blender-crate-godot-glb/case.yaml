@@ -1,0 +1,7 @@
+schema_version: "1.1"
+name: blender-crate-godot-glb
+expected_outcome: |
+  The agent writes a spec covering the game-asset points (engine, triangle budget, metres scale, bottom-centre pivot,
+  textures, LODs, collision), builds the crate in Blender modelled in metres (scale_length 1.0), exports
+  models/<name>/<name>.glb with use_selection and export_yup, counts triangles against the 300 budget, and
+  records everything in the spec.

@@ -1,0 +1,7 @@
+schema_version: "1.1"
+name: blender-cabin-floor-plans
+expected_outcome: |
+  For a building, the agent writes the spec, records the stated programme as Decisions, writes
+  models/<name>/plans/layout.json in the documented format, generates floor-0.svg and floor-1.svg with the bundled
+  draw_plans.py, summarises each floor with room areas and asks the user to approve the plans. It does not open
+  Blender or write modelling code before approval.

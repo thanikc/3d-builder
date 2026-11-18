@@ -1,0 +1,7 @@
+schema_version: "1.1"
+name: blender-phone-holder-mm-units
+expected_outcome: |
+  A printable desk phone stand built in Blender with the millimetre unit setup (scale_length 0.001, length_unit
+  MILLIMETERS), exact box sizes via size=1 + scale + applied transforms, EXACT boolean cutters that overshoot the
+  walls, a 60 mm phone getting a slot slightly wider than 60 mm with the clearance recorded, saved as
+  models/<name>/<name>.blend.

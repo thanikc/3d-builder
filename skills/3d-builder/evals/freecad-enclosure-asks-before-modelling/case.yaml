@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: freecad-enclosure-asks-before-modelling
+expected_outcome: |
+  The agent writes a spec with Status clarifying that lists the open points (board model/size, clearance, wall thickness,
+  lid type, mounting, cut-outs), asks exactly one question (yes/no or multiple choice with a recommended option first),
+  then stops and waits. No modelling script, .FCStd or FreeCAD call is made.

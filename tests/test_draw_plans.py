@@ -1,0 +1,439 @@
+"""Unit tests for skills/3d-builder/scripts/draw_plans.py.
+
+Run from the repository root:
+    python3 -m unittest discover -s tests -v
+"""
+import contextlib
+import importlib.util
+import io
+import json
+import re
+import sys
+import tempfile
+import unittest
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parents[1]
+SKILL = ROOT / "skills" / "3d-builder"
+SCRIPT = SKILL / "scripts" / "draw_plans.py"
+
+_spec = importlib.util.spec_from_file_location("draw_plans", SCRIPT)
+dp = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(dp)
+
+SVG_NS = "{http://www.w3.org/2000/svg}"
+
+
+def box_floor(fid="0", w=6000, d=4000, t=200, **extra):
+    """A rectangular floor of four exterior walls, corners sharing endpoints."""
+    floor = {
+        "id": fid,
+        "name": f"Floor {fid}",
+        "walls": [
+            {"id": "s", "from": [0, 0], "to": [w, 0], "thickness": t, "type": "exterior"},
+            {"id": "e", "from": [w, 0], "to": [w, d], "thickness": t, "type": "exterior"},
+            {"id": "n", "from": [w, d], "to": [0, d], "thickness": t, "type": "exterior"},
+            {"id": "w", "from": [0, d], "to": [0, 0], "thickness": t, "type": "exterior"},
+        ],
+    }
+    floor.update(extra)
+    return floor
+
+
+def run_main(*argv):
+    """Run draw_plans.main() in-process; return (exit code, stdout, stderr)."""
+    out, err = io.StringIO(), io.StringIO()
+    with mock.patch.object(sys, "argv", ["draw_plans.py", *map(str, argv)]), \
+            contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = dp.main()
+    return code, out.getvalue(), err.getvalue()
+
+
+class GeometryHelpers(unittest.TestCase):
+    def test_vector_ops(self):
+        self.assertEqual(dp.add((1, 2), (3, 4)), (4, 6))
+        self.assertEqual(dp.sub((1, 2), (3, 5)), (-2, -3))
+        self.assertEqual(dp.mul((1, -2), 3), (3, -6))
+        self.assertEqual(dp.norm((3, 4)), 5)
+
+    def test_close_uses_eps(self):
+        self.assertTrue(dp.close((0, 0), (0.5, 0)))
+        self.assertFalse(dp.close((0, 0), (1.5, 0)))
+
+    def test_pt_flips_y_for_svg(self):
+        self.assertEqual(dp.pt((10, 20)), "10.0,-20.0")
+
+    def test_metres(self):
+        self.assertEqual(dp.metres(9300), "9.30 m")
+
+    def test_fmt_attrs_turns_underscores_into_hyphens(self):
+        self.assertEqual(dp.fmt_attrs({"stroke_width": "1", "fill": "red"}),
+                         ' stroke-width="1" fill="red"')
+
+    def test_text_escapes_content(self):
+        self.assertIn("A &amp; B &lt;x&gt;", dp.text((0, 0), "A & B <x>", 2))
+
+    def test_nice_bar_is_at_most_a_third_of_the_width(self):
+        self.assertEqual(dp.nice_bar(9000), 2000)
+        self.assertEqual(dp.nice_bar(30000), 10000)
+        self.assertEqual(dp.nice_bar(100), 500)  # floor value for tiny plans
+
+    def test_rect_points_and_bounds(self):
+        pts = dp.rect_points({"x": 1, "y": 2, "w": 10, "d": 5})
+        self.assertEqual(pts, [(1, 2), (11, 2), (11, 7), (1, 7)])
+        self.assertEqual(dp.bounds(pts), (1, 2, 11, 7))
+
+
+class AreaAndCentroid(unittest.TestCase):
+    def test_rectangle(self):
+        area, c = dp.area_and_centroid([(0, 0), (4000, 0), (4000, 3000), (0, 3000)])
+        self.assertAlmostEqual(area, 12e6)
+        self.assertAlmostEqual(c[0], 2000)
+        self.assertAlmostEqual(c[1], 1500)
+
+    def test_clockwise_order_still_gives_positive_area(self):
+        area, c = dp.area_and_centroid([(0, 0), (0, 3000), (4000, 3000), (4000, 0)])
+        self.assertAlmostEqual(area, 12e6)
+        self.assertAlmostEqual(c[0], 2000)
+
+    def test_l_shape(self):
+        # 2x2 square with the top-right 1x1 removed: area 3
+        area, _ = dp.area_and_centroid([(0, 0), (2, 0), (2, 1), (1, 1), (1, 2), (0, 2)])
+        self.assertAlmostEqual(area, 3)
+
+    def test_degenerate_polygon(self):
+        area, c = dp.area_and_centroid([(0, 0), (1, 0), (2, 0)])
+        self.assertEqual(area, 0.0)
+        self.assertEqual(c, (0, 0))
+
+
+class WallTests(unittest.TestCase):
+    def test_defaults(self):
+        w = dp.Wall({"id": 1, "from": [0, 0], "to": [3000, 0]})
+        self.assertEqual(w.id, "1")
+        self.assertEqual(w.t, 200)
+        self.assertEqual(w.type, "interior")
+        self.assertEqual(w.L, 3000)
+
+    def test_direction_and_left_normal(self):
+        w = dp.Wall({"id": "a", "from": [0, 0], "to": [0, 2000]})
+        self.assertEqual(w.u, (0, 1))
+        self.assertEqual(w.n, (-1, 0))  # left of a northward wall is west
+        self.assertEqual(w.at(500, 100), (-100, 500))
+
+    def test_quad_spans_thickness(self):
+        w = dp.Wall({"id": "a", "from": [0, 0], "to": [1000, 0], "thickness": 300})
+        self.assertEqual(dp.bounds(w.quad(0, 1000)), (0, -150, 1000, 150))
+
+    def test_missing_key_raises(self):
+        with self.assertRaisesRegex(dp.LayoutError, "missing"):
+            dp.Wall({"id": "a", "from": [0, 0]})
+
+    def test_zero_length_raises(self):
+        with self.assertRaisesRegex(dp.LayoutError, "zero length"):
+            dp.Wall({"id": "a", "from": [5, 5], "to": [5.5, 5]})
+
+    def test_pieces_skip_openings(self):
+        w = dp.Wall({"id": "a", "from": [0, 0], "to": [5000, 0]})
+        w.openings = [{"offset": 1000, "width": 900}, {"offset": 3000, "width": 1200}]
+        self.assertEqual(w.pieces(), [(0.0, 1000), (1900, 3000), (4200, 5000)])
+
+    def test_pieces_include_corner_extensions(self):
+        w = dp.Wall({"id": "a", "from": [0, 0], "to": [5000, 0]})
+        w.ext_a, w.ext_b = 100, 60
+        self.assertEqual(w.pieces(), [(-100, 5060)])
+
+    def test_pieces_with_opening_at_wall_end(self):
+        w = dp.Wall({"id": "a", "from": [0, 0], "to": [5000, 0]})
+        w.openings = [{"offset": 0, "width": 1000}, {"offset": 4000, "width": 1000}]
+        self.assertEqual(w.pieces(), [(1000, 4000)])
+
+
+class BuildWalls(unittest.TestCase):
+    def test_corners_extend_by_half_the_other_wall(self):
+        floor = box_floor()
+        floor["walls"][1]["thickness"] = 300  # east wall thicker
+        walls = dp.build_walls(floor)
+        self.assertEqual(walls["s"].ext_a, 100)  # meets west wall (200)
+        self.assertEqual(walls["s"].ext_b, 150)  # meets east wall (300)
+        self.assertEqual(walls["e"].ext_a, 100)
+
+    def test_free_end_and_t_junction_are_not_extended(self):
+        floor = box_floor()
+        # interior wall ending on the south wall's centreline (T-junction), free at the top
+        floor["walls"].append({"id": "i", "from": [3000, 0], "to": [3000, 2000], "thickness": 100})
+        walls = dp.build_walls(floor)
+        self.assertEqual((walls["i"].ext_a, walls["i"].ext_b), (0, 0))
+
+    def test_duplicate_wall_id(self):
+        floor = box_floor()
+        floor["walls"][1]["id"] = "s"
+        with self.assertRaisesRegex(dp.LayoutError, "duplicate wall id s"):
+            dp.build_walls(floor)
+
+    def test_opening_on_unknown_wall(self):
+        floor = box_floor(openings=[{"wall": "x", "offset": 0, "width": 900}])
+        with self.assertRaisesRegex(dp.LayoutError, "unknown wall 'x'"):
+            dp.build_walls(floor)
+
+    def test_opening_too_wide_for_wall(self):
+        floor = box_floor(openings=[{"wall": "s", "offset": 5500, "width": 900}])
+        with self.assertRaisesRegex(dp.LayoutError, "does not fit"):
+            dp.build_walls(floor)
+
+    def test_negative_offset(self):
+        floor = box_floor(openings=[{"wall": "s", "offset": -10, "width": 900}])
+        with self.assertRaisesRegex(dp.LayoutError, "does not fit"):
+            dp.build_walls(floor)
+
+    def test_opening_exactly_filling_wall_is_allowed(self):
+        floor = box_floor(openings=[{"wall": "s", "offset": 0, "width": 6000, "type": "opening"}])
+        walls = dp.build_walls(floor)
+        self.assertEqual(len(walls["s"].openings), 1)
+
+    def test_overlapping_openings(self):
+        floor = box_floor(openings=[{"wall": "s", "offset": 1000, "width": 1000},
+                                    {"wall": "s", "offset": 1500, "width": 900}])
+        with self.assertRaisesRegex(dp.LayoutError, "overlap on wall s"):
+            dp.build_walls(floor)
+
+    def test_adjacent_openings_do_not_overlap(self):
+        floor = box_floor(openings=[{"wall": "s", "offset": 1000, "width": 1000},
+                                    {"wall": "s", "offset": 2000, "width": 900}])
+        dp.build_walls(floor)
+
+    def test_openings_sorted_and_default_to_door(self):
+        floor = box_floor(openings=[{"wall": "s", "offset": "3000", "width": 900},
+                                    {"wall": "s", "offset": 500, "width": "1200", "type": "window"}])
+        walls = dp.build_walls(floor)
+        self.assertEqual([o["offset"] for o in walls["s"].openings], [500.0, 3000.0])
+        self.assertEqual([o["type"] for o in walls["s"].openings], ["window", "door"])
+
+
+class DoorGeometry(unittest.TestCase):
+    def setUp(self):
+        self.w = dp.Wall({"id": "s", "from": [0, 0], "to": [5000, 0], "thickness": 200})
+
+    def geom(self, **o):
+        return dp.door_geometry(self.w, dict({"offset": 1000, "width": 900}, **o))
+
+    def test_hinge_start_swing_left(self):
+        hinge, leaf, jamb = self.geom()
+        self.assertEqual(hinge, (1000, 100))
+        self.assertEqual(leaf, (1000, 1000))
+        self.assertEqual(jamb, (1900, 100))
+
+    def test_hinge_end_swing_right(self):
+        hinge, leaf, jamb = self.geom(hinge="end", swing="right")
+        self.assertEqual(hinge, (1900, -100))
+        self.assertEqual(leaf, (1900, -1000))
+        self.assertEqual(jamb, (1000, -100))
+
+    def test_door_swing_is_included_in_frame(self):
+        floor = box_floor(openings=[{"wall": "s", "offset": 1000, "width": 900, "swing": "right"}])
+        walls = dp.build_walls(floor)
+        _, y0, _, _ = dp.bounds(dp.floor_points(floor, walls))
+        self.assertAlmostEqual(y0, -1000)  # leaf swings 900 mm outside the 100 mm wall face
+
+
+class DrawRoom(unittest.TestCase):
+    def texts(self, items):
+        return [re.sub("<[^>]+>", "", s) for s in items]
+
+    def test_rectangle_gets_name_area_and_size(self):
+        room = {"name": "Living", "polygon": [[0, 0], [5000, 0], [5000, 4000], [0, 4000]]}
+        self.assertEqual(self.texts(dp.draw_room(room, 50)),
+                         ["Living", "20.0 m²", "5.00 × 4.00 m"])
+
+    def test_l_shape_has_no_size_line(self):
+        room = {"name": "Hall", "polygon": [[0, 0], [2000, 0], [2000, 1000], [1000, 1000],
+                                            [1000, 2000], [0, 2000]]}
+        self.assertEqual(self.texts(dp.draw_room(room, 50)), ["Hall", "3.0 m²"])
+
+    def test_label_at_overrides_centroid(self):
+        room = {"name": "X", "label_at": [123, 456], "polygon": [[0, 0], [10, 0], [10, 10], [0, 10]]}
+        self.assertIn('x="123.0"', dp.draw_room(room, 50)[0])
+
+    def test_no_polygon_and_no_label_draws_nothing(self):
+        self.assertEqual(dp.draw_room({"name": "Ghost"}, 50), [])
+
+    def test_label_without_polygon(self):
+        self.assertEqual(self.texts(dp.draw_room({"name": "Void", "label_at": [0, 0]}, 50)), ["Void"])
+
+
+class DrawFloor(unittest.TestCase):
+    def render(self, layout, floor):
+        walls = dp.build_walls(floor)
+        frame = dp.bounds(dp.floor_points(floor, walls))
+        k = float(layout.get("scale", 50))
+        return dp.draw_floor(layout, floor, walls, frame, k)
+
+    def test_output_is_valid_svg_with_all_groups(self):
+        floor = box_floor(
+            openings=[{"wall": "s", "type": "door", "offset": 1000, "width": 900},
+                      {"wall": "n", "type": "window", "offset": 1000, "width": 1500},
+                      {"wall": "e", "type": "opening", "offset": 1000, "width": 1000}],
+            rooms=[{"name": "Room", "polygon": [[100, 100], [5900, 100], [5900, 3900], [100, 3900]]}],
+            stairs=[{"x": 4000, "y": 500, "w": 1000, "d": 2500, "up": "N"}],
+            fixtures=[{"label": "counter", "x": 200, "y": 3200, "w": 2000, "d": 600}])
+        root = ET.fromstring(self.render({"name": "Test", "scale": 50}, floor))
+        self.assertEqual(root.tag, SVG_NS + "svg")
+        groups = {g.get("id") for g in root.iter(SVG_NS + "g")}
+        self.assertTrue({"fixtures", "stairs", "walls", "openings", "rooms", "dimensions"} <= groups)
+
+    def test_paper_size_follows_scale(self):
+        root = ET.fromstring(self.render({"scale": 100}, box_floor()))
+        _, _, vw, vh = map(float, root.get("viewBox").split())
+        self.assertAlmostEqual(float(root.get("width")[:-2]), vw / 100, places=0)
+        self.assertAlmostEqual(float(root.get("height")[:-2]), vh / 100, places=0)
+
+    def test_overall_dimensions_measured_over_outer_faces(self):
+        svg = self.render({}, box_floor(w=6000, d=4000, t=200))
+        self.assertIn(">6.20 m<", svg)
+        self.assertIn(">4.20 m<", svg)
+
+    def test_window_does_not_break_wall_into_door_swing(self):
+        floor = box_floor(openings=[{"wall": "s", "type": "window", "offset": 1000, "width": 1500}])
+        svg = self.render({}, floor)
+        self.assertNotIn("<path", svg)  # door arcs are the only paths
+
+    def test_door_draws_arc(self):
+        floor = box_floor(openings=[{"wall": "s", "type": "door", "offset": 1000, "width": 900}])
+        self.assertEqual(self.render({}, floor).count("<path"), 1)
+
+    def test_door_swing_flag_flips_with_swing_side(self):
+        def sweep(swing):
+            floor = box_floor(openings=[{"wall": "s", "offset": 1000, "width": 900, "swing": swing}])
+            return re.search(r" A [\d.]+ [\d.]+ 0 0 (\d)", self.render({}, floor)).group(1)
+        self.assertNotEqual(sweep("left"), sweep("right"))
+
+    def test_title_and_info_line(self):
+        floor = box_floor(elevation=2900, height=2800,
+                          rooms=[{"name": "A", "polygon": [[0, 0], [3000, 0], [3000, 2000], [0, 2000]]}])
+        svg = self.render({"name": "Tom & Jerry's", "scale": 50}, floor)
+        self.assertIn("<title>Tom &amp; Jerry's — Floor 0</title>", svg)
+        self.assertIn("Scale 1:50", svg)
+        self.assertIn("floor level +2.90 m", svg)
+        self.assertIn("floor-to-floor 2.80 m", svg)
+        self.assertIn("room area 6.0 m²", svg)
+        ET.fromstring(svg)
+
+    def test_north_arrow_only_when_given(self):
+        self.assertNotIn(">N</text>", self.render({}, box_floor()))
+        svg = self.render({"north": 30}, box_floor())
+        self.assertIn(">N</text>", svg)
+        self.assertIn("rotate(30.0", svg)
+
+    def test_stair_directions(self):
+        for up in "NSEW":
+            floor = box_floor(stairs=[{"x": 1000, "y": 1000, "w": 1000, "d": 2000, "up": up,
+                                       "steps": 10, "label": "UP"}])
+            svg = self.render({}, floor)
+            stairs = re.search(r'<g id="stairs">(.*?)</g>', svg, re.S).group(1)
+            # 9 tread lines + arrow shaft
+            self.assertEqual(stairs.count("<line"), 10, up)
+            self.assertIn(">UP<", stairs)
+
+    def test_interior_walls_used_for_dimensions_when_no_exterior(self):
+        floor = {"id": "0", "walls": [{"id": "a", "from": [0, 0], "to": [3000, 0], "thickness": 100}]}
+        self.assertIn(">3.00 m<", self.render({}, floor))
+
+
+class MainCli(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def write(self, layout, name="layout.json"):
+        p = self.dir / name
+        p.write_text(json.dumps(layout) if not isinstance(layout, str) else layout, encoding="utf-8")
+        return p
+
+    def two_floor_layout(self):
+        room = {"name": "Big room", "polygon": [[100, 100], [5900, 100], [5900, 3900], [100, 3900]]}
+        ground = box_floor("0", rooms=[room],
+                           stairs=[{"x": 4500, "y": 200, "w": 1000, "d": 3000, "up": "N", "label": "UP"}])
+        upper = box_floor("1", w=8000, rooms=[dict(room, name="Loft")])
+        return {"name": "House", "units": "mm", "floors": [ground, upper]}
+
+    def test_writes_one_svg_per_floor_next_to_layout(self):
+        code, out, err = run_main(self.write(self.two_floor_layout()))
+        self.assertEqual(code, 0, err)
+        self.assertTrue((self.dir / "floor-0.svg").is_file())
+        self.assertTrue((self.dir / "floor-1.svg").is_file())
+        self.assertIn("Big room", out)
+        self.assertIn("22.0 m²", out)
+        self.assertIn("total", out)
+
+    def test_floors_share_one_frame(self):
+        run_main(self.write(self.two_floor_layout()))
+        boxes = {ET.parse(self.dir / f"floor-{i}.svg").getroot().get("viewBox") for i in "01"}
+        self.assertEqual(len(boxes), 1)
+
+    def test_out_dir_is_created(self):
+        out_dir = self.dir / "a" / "b"
+        code, _, err = run_main(self.write(self.two_floor_layout()), "--out", out_dir)
+        self.assertEqual(code, 0, err)
+        self.assertTrue((out_dir / "floor-1.svg").is_file())
+        self.assertFalse((self.dir / "floor-1.svg").exists())
+
+    def test_floor_id_names_the_file(self):
+        layout = {"floors": [box_floor("b1")]}
+        run_main(self.write(layout))
+        self.assertTrue((self.dir / "floor-b1.svg").is_file())
+
+    def assert_error(self, layout, message):
+        code, out, err = run_main(self.write(layout))
+        self.assertEqual(code, 1)
+        self.assertIn(message, err)
+        self.assertEqual(list(self.dir.glob("*.svg")), [])
+
+    def test_rejects_non_mm_units(self):
+        self.assert_error({"units": "m", "floors": [box_floor()]}, '"units" must be "mm"')
+
+    def test_rejects_missing_floors(self):
+        self.assert_error({"floors": []}, "no floors")
+
+    def test_rejects_floor_without_id(self):
+        floor = box_floor()
+        del floor["id"]
+        self.assert_error({"floors": [floor]}, "has no id")
+
+    def test_rejects_empty_geometry(self):
+        self.assert_error({"floors": [{"id": "0"}]}, "no geometry")
+
+    def test_rejects_invalid_json(self):
+        self.assert_error("{not json", "error:")
+
+    def test_layout_errors_are_reported_not_raised(self):
+        self.assert_error({"floors": [box_floor(openings=[{"wall": "zz", "offset": 0, "width": 1}])]},
+                          "unknown wall")
+
+    def test_errors_in_later_floor_write_nothing(self):
+        bad = box_floor("1", openings=[{"wall": "s", "offset": 0, "width": 99999}])
+        self.assert_error({"floors": [box_floor("0"), bad]}, "does not fit")
+
+
+class DocumentedExample(unittest.TestCase):
+    """The example layout in references/floorplans.md must stay valid."""
+
+    def test_floorplans_example_renders(self):
+        md = (SKILL / "references" / "floorplans.md").read_text(encoding="utf-8")
+        example = re.search(r"```json\n(.*?)```", md, re.S).group(1)
+        layout = json.loads(example)
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "layout.json"
+            p.write_text(json.dumps(layout), encoding="utf-8")
+            code, out, err = run_main(p)
+            self.assertEqual(code, 0, err)
+            ET.parse(Path(tmp) / "floor-0.svg")
+            self.assertIn("Living", out)
+
+
+if __name__ == "__main__":
+    unittest.main()

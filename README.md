@@ -86,3 +86,17 @@ The agent then creates or edits the model and saves it in the model's folder.
 For assets meant for a game engine or a web page, the agent also asks about engine-specific points like the target engine, polygon budget, scale, pivot, textures, LODs and collision. It builds the asset in Blender and exports it next to the `.blend` file: `.glb` for the web and Godot, `.fbx` for Unity and Unreal. It checks the triangle count against the budget.
 
 The skill delivers the asset file only. It doesn't write engine scripts or scene code.
+
+## Development
+
+Unit tests for `draw_plans.py` (Python 3 standard library only):
+
+```shell
+python3 -m unittest discover -s tests -v
+```
+
+Evals for the skill live in `skills/3d-builder/evals/`, one folder per test case (Blender and FreeCAD, script fallback, building plans, editing an existing model). With Claude Code, run them from the skill folder:
+
+```shell
+cd skills/3d-builder && claude plugin eval . --allow-tools Write,Edit,Bash --scaffold
+```
