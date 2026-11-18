@@ -16,17 +16,19 @@ Copy this into `specs/<yyyy-mm-dd-hhmmss>-<name>.md`. Drop sections that are emp
 
 ## Summary
 
-<2–4 sentences: what the object is, what it's for, how it will be made (3D print, CNC, render-only).>
+<2–4 sentences: what the object is, what it's for, how it will be made or used (3D print, CNC, render-only, game/web asset for <engine>).>
 
 ## Requirements
 
-All dimensions in mm unless stated otherwise.
+All dimensions in mm unless stated otherwise (for game/web assets, state the engine units, e.g. 1 unit = 1 m).
 
 | Feature | Value | Source |
 |---|---|---|
 | Overall width | 68 mm | decision |
 | Phone slot width | 62 mm (60 mm phone + 1 mm clearance per side) | request + assumption |
 | ... | ... | request / decision / assumption |
+
+<For game/web assets, also rows for: target engine, triangle budget, scale/units, pivot, UVs/textures, LODs, collision mesh.>
 
 <For edits: a "Changes" list and a "Must stay the same" list instead of, or in addition to, the table.>
 
@@ -46,7 +48,8 @@ Open points the agent decided on its own, each with a reason.
 
 - Model: `models/<name>.blend` / `models/<name>.FCStd`
 - Script: `models/<name>.py`  <!-- script fallback only -->
-- Verified: <bounding box, features checked>
+- Export: `models/<name>.glb` / `models/<name>.fbx`  <!-- game/web assets only -->
+- Verified: <bounding box, features checked; triangle count for game/web assets>
 - Notes: <anything that turned out different from the plan>
 
 ## Revisions

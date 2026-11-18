@@ -1,6 +1,6 @@
 ---
 name: 3d-builder
-description: Spec-driven creation and editing of 3D models in Blender or FreeCAD. Writes a spec file in specs/, asks clarifying questions one at a time, records every decision and assumption, then builds the model via a Blender/FreeCAD MCP server or a generated Python script and saves it to models/. Use whenever the user wants a 3D model, part, object, enclosure, bracket, holder, mount, case, prop, mesh or CAD design created or changed - even if they don't mention Blender, FreeCAD or "3D" explicitly (e.g. "design a wall mount for my router", "make the hook 5 mm thicker", "I need a printable box for an Arduino"). Not for questions about 3D concepts, rendering-only tasks on an existing scene, or game/web 3D code (three.js, Unity).
+description: Spec-driven creation and editing of 3D models in Blender or FreeCAD. Writes a spec file in specs/, asks clarifying questions one at a time, records every decision and assumption, then builds the model via a Blender/FreeCAD MCP server or a generated Python script and saves it to models/. Use whenever the user wants a 3D model, part, object, enclosure, bracket, holder, mount, case, prop, mesh or CAD design created or changed - even if they don't mention Blender, FreeCAD or "3D" explicitly (e.g. "design a wall mount for my router", "make the hook 5 mm thicker", "I need a printable box for an Arduino", "a low-poly crate for my Godot game"). Also for assets meant for games or the web (exports .glb/.fbx for three.js, Unity, Unreal, Godot). Not for writing engine or scene code, questions about 3D concepts, or rendering-only tasks on an existing scene.
 ---
 
 # 3d-builder
@@ -22,7 +22,8 @@ Fill in what the request already states, then list the open points: everything t
 - Fit and clearance against real objects (a 60 mm phone needs a slot slightly wider than 60 mm; how much?)
 - Wall thickness, fillets/chamfers, hole sizes, screw types
 - Mounting method, orientation, load
-- Purpose and manufacturing (3D printing → overhangs, minimum walls, flat base; CNC; render-only)
+- Purpose and manufacturing (3D printing → overhangs, minimum walls, flat base; CNC; render-only; game/web asset)
+- For game/web assets: target engine, polygon budget, scale in engine units, pivot position, UVs and textures vs. plain colours, LODs, collision mesh
 - Level of detail, materials (Blender), parametric needs (FreeCAD)
 
 **Editing an existing model:** look in `specs/` and `models/` for the object first. Write a new spec for the change (each request gets its own file, so the history stays readable), link it to the previous spec, and state what changes and what must stay the same. Read the existing model (via MCP, or the script that built it) before editing, so the edit starts from what's actually there.
@@ -46,7 +47,7 @@ If the request is already fully specified, skip the questions and say so in one 
 
 ## Phase 3: Model
 
-Save the result to `models/<name>.blend` (Blender) or `models/<name>.FCStd` (FreeCAD). Create `models/` if needed.
+Save the result to `models/<name>.blend` (Blender) or `models/<name>.FCStd` (FreeCAD). Create `models/` if needed. For a game or web asset, also export it next to the source file (see [Export for engines](#export-for-engines)).
 
 ### Choose the tool
 
@@ -54,7 +55,7 @@ Check which MCP servers are configured: look at your available tools for Blender
 
 1. **Remembered choice:** if `.3d-builder.json` exists in the project root, use its `"tool"` (`"blender"` or `"freecad"`) unless the user asks for something else.
 2. **Exactly one MCP server configured:** use that tool.
-3. **Both or neither configured:** ask the user which tool to use (one multiple-choice question). Recommend FreeCAD for functional parts with precise dimensions (brackets, enclosures, anything printed or machined), and Blender for organic shapes, sculpted or decorative objects, and anything meant for rendering.
+3. **Both or neither configured:** ask the user which tool to use (one multiple-choice question). Recommend FreeCAD for functional parts with precise dimensions (brackets, enclosures, anything printed or machined), and Blender for organic shapes, sculpted or decorative objects, anything meant for rendering, and game or web assets (FreeCAD's tessellated meshes are poorly suited to real-time use).
 4. Remember the choice by writing `{"tool": "blender"}` or `{"tool": "freecad"}` to `.3d-builder.json`. Record the tool in the spec too.
 
 ### Build via MCP (preferred)
@@ -76,10 +77,23 @@ If it runs, check the output (file exists, printed bounding box matches the spec
 
 Tool-specific pitfalls and script skeletons: [references/blender.md](references/blender.md), [references/freecad.md](references/freecad.md). Read the one for the chosen tool before writing code.
 
+### Export for engines
+
+Only for game or web assets. Keep the `.blend` as the editable source and export alongside it:
+
+| Target | Format | File |
+|---|---|---|
+| Web (three.js, Babylon.js), Godot, general use | glTF binary | `models/<name>.glb` |
+| Unity, Unreal | FBX (or `.glb` if the user's pipeline imports glTF) | `models/<name>.fbx` |
+
+Engines are real-time, so the asset has to respect the spec's budget: check the triangle count, apply transforms, put the pivot where the spec says, and match the engine's scale and axes. Export settings and pitfalls: the "Game and web assets" section in [references/blender.md](references/blender.md).
+
+This skill delivers the asset file. Loading it into a scene, writing engine scripts or building a three.js page is outside its scope; if the user wants that too, do it as a separate step after this workflow is finished.
+
 ### Finish
 
-1. Verify the model against the spec: overall dimensions, every listed feature present, and any fit or clearance requirements.
-2. Update the spec: set **Status** to `done`, fill in **Output** (file paths, tool, MCP or script), and note anything that turned out different from the plan.
+1. Verify the model against the spec: overall dimensions, every listed feature present, and any fit or clearance requirements. For game/web assets, also the triangle count against the budget and the exported file's bounding box in engine units.
+2. Update the spec: set **Status** to `done`, fill in **Output** (file paths including exports, tool, MCP or script), and note anything that turned out different from the plan.
 3. Report to the user briefly: what was built, where the files are, and the main assumptions they may want to revisit (point to the spec for the rest).
 
 If the user asks for changes after that, treat them as a new edit request (Phase 1, "Editing an existing model"). Small follow-ups in the same conversation ("a bit thicker") can go in the same spec under **Revisions** instead.

@@ -1,6 +1,6 @@
 # 3d-builder
 
-An agent skill that makes your AI agent build and edit 3D models in Blender or FreeCAD in a spec-driven way.
+An agent skill that makes your AI agent build and edit 3D models in Blender or FreeCAD in a spec-driven way. That includes printable parts and CAD designs as well as assets for games and the web (exported as `.glb` or `.fbx` for three.js, Unity, Unreal or Godot).
 
 If you ask an agent for a 3D model straight away, it guesses at dimensions, proportions and details, and you end up correcting it over and over. With this skill, the agent first writes down what it is going to build in a spec file. It asks you about anything that is unclear, and only then starts modelling. Each spec stays in your project as a record of what was asked for and decided.
 
@@ -22,6 +22,8 @@ npx skills add thanikc/3d-builder
 You don't need to call the skill explicitly. It triggers when your agent sees from the conversation that a 3D model should be created or edited. For example:
 
 > Build a wall-mounted holder for a 60 mm wide phone with a cable slot at the bottom.
+
+> Make a low-poly wooden crate for my Godot game.
 
 When it's done, your project contains:
 
@@ -56,3 +58,9 @@ The agent then creates or edits the model and saves it to the `models/` folder.
 1. **MCP first.** It uses a Blender or FreeCAD MCP server if one is configured.
 2. **Choosing a tool.** If both are configured, or neither is, it asks which tool you want to use and remembers your choice.
 3. **Script fallback.** If no MCP server is available, or the server doesn't respond within 10 seconds, it generates a Python script for Blender or FreeCAD that builds the model.
+
+### Game and web assets
+
+For assets meant for a game engine or a web page, the agent also asks about engine-specific points like the target engine, polygon budget, scale, pivot, textures, LODs and collision. It builds the asset in Blender and exports it next to the `.blend` file: `.glb` for the web and Godot, `.fbx` for Unity and Unreal. It checks the triangle count against the budget.
+
+The skill delivers the asset file only. It doesn't write engine scripts or scene code.

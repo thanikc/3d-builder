@@ -54,3 +54,44 @@ print("dimensions (mm):", tuple(round(v, 2) for v in body.dimensions))
 bpy.ops.wm.save_as_mainfile(filepath=OUT)
 print("saved", OUT)
 ```
+
+## Game and web assets
+
+- **Units: model in metres.** Engines treat 1 unit as 1 m (Unreal uses cm, but its FBX importer converts from metres). The glTF exporter ignores `scale_length`, so a part modelled with the mm setup above exports 1000× too large. For engine assets keep `scale_length = 1.0` and model in metres.
+- **Axes.** Blender is Z-up; glTF and most engines are Y-up. The glTF exporter converts by default (`export_yup=True`). For FBX, use `axis_forward='-Z', axis_up='Y'`. Model the asset facing −Y in Blender, which becomes +Z forward in glTF.
+- **Pivot.** The object origin becomes the pivot in the engine. Put it where the spec says (usually bottom centre for props so they sit on the floor, or the hinge point for doors) and leave the object at the world origin with rotation 0 and scale 1, so all transforms are applied.
+- **Triangle budget.** Count triangles on the evaluated mesh (sum of `len(poly.vertices) - 2` over the polygons) and compare with the budget in the spec. Avoid bevels and subdivision you can't afford; use the `DECIMATE` modifier for LODs.
+- **Normals and shading.** Set smooth or flat shading on purpose, and use auto smooth / `WEIGHTED_NORMAL` for hard-edged props. Keep normals pointing outward, because engines cull back faces.
+- **Materials.** Only Principled BSDF inputs (base colour, metallic, roughness, normal map, emission, alpha) survive export. Procedural node setups don't, so bake them to image textures. UV-unwrap every mesh that uses a texture, and use one material per asset where possible (fewer draw calls).
+- **LODs and collision.** Follow the engine's import naming: Unity and Unreal recognise `<name>_LOD0`, `<name>_LOD1`, … in FBX; Unreal uses `UCX_<name>` for convex collision meshes; Godot uses a `-col` (trimesh) or `-colonly` suffix. Godot generates LODs on import, so only make them by hand for Unity or Unreal when the spec asks.
+- **Export only the asset.** Delete or exclude cutters, helper objects, cameras and lights before exporting (`use_selection=True` with only the asset selected).
+
+Export snippet, appended to the script (or run via MCP) after the asset is built:
+
+```python
+# Make sure only the asset (plus LOD/collision meshes) is selected
+bpy.ops.object.select_all(action='DESELECT')
+asset.select_set(True)
+bpy.context.view_layer.objects.active = asset
+
+base = os.path.splitext(OUT)[0]
+
+# glTF binary: web, Godot, general use
+bpy.ops.export_scene.gltf(
+    filepath=base + ".glb", export_format='GLB',
+    use_selection=True, export_apply=True, export_yup=True,
+)
+
+# FBX: Unity, Unreal
+bpy.ops.export_scene.fbx(
+    filepath=base + ".fbx", use_selection=True,
+    apply_unit_scale=True, apply_scale_options='FBX_SCALE_ALL',
+    axis_forward='-Z', axis_up='Y', use_mesh_modifiers=True,
+    mesh_smooth_type='FACE',
+)
+
+deps = bpy.context.evaluated_depsgraph_get()
+mesh = asset.evaluated_get(deps).to_mesh()
+tris = sum(len(p.vertices) - 2 for p in mesh.polygons)
+print("triangles:", tris, "dimensions (m):", tuple(round(v, 3) for v in asset.dimensions))
+```
