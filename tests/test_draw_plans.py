@@ -291,8 +291,8 @@ class DrawFloor(unittest.TestCase):
         root = ET.fromstring(self.render({"name": "Test", "scale": 50}, floor))
         self.assertEqual(root.tag, SVG_NS + "svg")
         groups = {g.get("id") for g in root.iter(SVG_NS + "g")}
-        self.assertTrue({"fixtures", "furniture", "stairs", "walls", "openings", "rooms",
-                         "dimensions"} <= groups)
+        self.assertTrue({"fills", "fixtures", "furniture", "stairs", "walls", "openings",
+                         "rooms", "dimensions"} <= groups)
 
     def test_paper_size_follows_scale(self):
         root = ET.fromstring(self.render({"scale": 100}, box_floor()))
@@ -645,6 +645,70 @@ class FurnitureInPlans(unittest.TestCase):
         code, err, svgs = self.run_layout([bed])
         self.assertEqual(code, 1)
         self.assertIn("error:", err)
+
+
+class FillTests(unittest.TestCase):
+    DECK = {"name": "Deck", "fill": "#e8dcc4",
+            "polygon": [[0, -2000], [6000, -2000], [6000, -100], [0, -100]]}
+    POOL = {"label": "pool", "x": 1000, "y": -6000, "w": 4000, "d": 2500, "fill": "#cfe8f5"}
+
+    def fills(self, svg):
+        return re.search(r'<g id="fills">(.*?)</g>', svg, re.S).group(1).strip()
+
+    def test_no_fill_leaves_the_group_empty(self):
+        floor = box_floor(rooms=[dict(self.DECK, fill=None)], fixtures=[dict(self.POOL, fill="")])
+        self.assertEqual(self.fills(DrawFloor().render({}, floor)), "")
+
+    def test_room_fill_follows_its_polygon(self):
+        group = self.fills(DrawFloor().render({}, box_floor(rooms=[self.DECK])))
+        self.assertEqual(group.count("<polygon"), 1)
+        self.assertIn('points="0.0,2000.0 6000.0,2000.0 6000.0,100.0 0.0,100.0"', group)
+        self.assertIn('fill="#e8dcc4"', group)
+        self.assertIn(f'stroke="{dp.COLORS["muted"]}"', group)
+        self.assertIn(f'stroke-width="{dp.PAPER["thin"] * 50:.1f}"', group)
+
+    def test_fixture_fill_uses_its_rectangle_and_keeps_the_dashed_outline(self):
+        svg = DrawFloor().render({}, box_floor(fixtures=[self.POOL]))
+        group = self.fills(svg)
+        self.assertIn('points="1000.0,6000.0 5000.0,6000.0 5000.0,3500.0 1000.0,3500.0"', group)
+        self.assertIn('fill="#cfe8f5"', group)
+        fixtures = re.search(r'<g id="fixtures">(.*?)</g>', svg, re.S).group(1)
+        self.assertIn('fill="none"', fixtures)
+        self.assertIn(">pool<", fixtures)
+
+    def test_rooms_and_fixtures_are_filled_in_order(self):
+        group = self.fills(DrawFloor().render({}, box_floor(rooms=[self.DECK], fixtures=[self.POOL])))
+        self.assertLess(group.index("#e8dcc4"), group.index("#cfe8f5"))
+
+    def test_degenerate_polygon_is_skipped(self):
+        room = dict(self.DECK, polygon=[[0, 0], [1000, 0]])
+        self.assertEqual(self.fills(DrawFloor().render({}, box_floor(rooms=[room]))), "")
+
+    def test_fills_are_drawn_before_everything_else_on_the_plan(self):
+        floor = box_floor(rooms=[self.DECK], fixtures=[self.POOL],
+                          furniture=[FurnitureInPlans.BED],
+                          stairs=[{"x": 4000, "y": 500, "w": 1000, "d": 2500, "up": "N"}])
+        svg = DrawFloor().render({}, floor)
+        ET.fromstring(svg)
+        start = svg.index('id="fills"')
+        for group in ("fixtures", "furniture", "stairs", "walls", "openings", "rooms"):
+            self.assertLess(start, svg.index(f'id="{group}"'), group)
+
+    def test_filled_outdoor_area_extends_the_frame(self):
+        floor = box_floor(rooms=[self.DECK])
+        x0, y0, _, _ = dp.bounds(dp.floor_points(floor, dp.build_walls(floor)))
+        self.assertEqual(y0, -2000)
+
+    def test_cli_renders_fills(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "layout.json"
+            p.write_text(json.dumps({"floors": [box_floor(rooms=[self.DECK], fixtures=[self.POOL])]}),
+                         encoding="utf-8")
+            code, out, err = run_main(p)
+            self.assertEqual(code, 0, err)
+            svg = (Path(tmp) / "floor-0.svg").read_text(encoding="utf-8")
+            self.assertIn('fill="#e8dcc4"', svg)
+            self.assertIn('fill="#cfe8f5"', svg)
 
 
 class DocumentedExample(unittest.TestCase):

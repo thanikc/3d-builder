@@ -453,7 +453,14 @@ def draw_floor(layout, floor, walls, frame, k, grid=None):
 
     if grid:
         out += draw_grid(grid, frame, k)
-    out.append('<g id="fixtures">')
+    out.append('<g id="fills">')  # optional surface tints (paving, water, lawn) under everything else
+    for item in floor.get("rooms", []) + floor.get("fixtures", []):
+        if item.get("fill"):
+            pts = [tuple(p) for p in item["polygon"]] if "polygon" in item else rect_points(item)
+            if len(pts) >= 3:
+                out.append(poly(pts, fill=item["fill"], stroke=COLORS["muted"],
+                                stroke_width=f"{PAPER['thin'] * k:.1f}"))
+    out.append('</g><g id="fixtures">')
     for f in floor.get("fixtures", []):
         pts = rect_points(f)
         out.append(poly(pts, fill="none", stroke=COLORS["fixture"], stroke_width=f"{PAPER['thin'] * k:.1f}",
