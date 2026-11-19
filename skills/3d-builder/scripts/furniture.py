@@ -282,6 +282,11 @@ def wc(p, W, D, it):
 
 def basin(p, W, D, it):
     p.rect(0, 0, W, D, fill=TOP if it.get("counter", True) else WET, stroke=WET_INK)
+    if it.get("trough"):                                   # one long trough bowl, single tap
+        tw = W - 2 * min(200, W * 0.12)
+        p.rect(W / 2 - tw / 2, D * 0.17, tw, D * 0.56, fill=WET, stroke=WET_INK, r=D * 0.2)
+        p.circle(W / 2, D - 60, 22, fill=WET_INK, stroke=WET_INK)
+        return
     n = it.get("basins", 1)
     for i in range(n):
         cu = W * (i + 0.5) / n

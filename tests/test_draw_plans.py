@@ -588,6 +588,10 @@ class FurnitureSymbols(unittest.TestCase):
         self.assertNotEqual(fu.draw_item(dict(self.PIECE, type="hob", burners=2), 50, 0.13),
                             fu.draw_item(dict(self.PIECE, type="hob"), 50, 0.13))
         self.assertGreater(count("basin", "<ellipse", basins=2), count("basin", "<ellipse"))
+        self.assertEqual(count("basin", "<ellipse", trough=True), 0)  # one long bowl, not round ones
+        self.assertEqual(count("basin", "<ellipse", trough=True, basins=2), 0)
+        self.assertEqual(count("basin", "<rect", trough=True), 2)
+        self.assertEqual(count("basin", "<circle", trough=True), 1)  # single tap
         self.assertLess(count("desk", "<circle", chair=False), count("desk", "<circle"))
         self.assertGreater(count("desk", "<rect", speakers=True), count("desk", "<rect"))
         self.assertGreater(count("appliance", "<circle", drum=True), count("appliance", "<circle"))
