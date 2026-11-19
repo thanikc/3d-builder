@@ -17,6 +17,9 @@ import sys
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import furniture  # noqa: E402  (sibling module: furniture symbols)
+
 # Sizes on paper in mm. Multiplied by the drawing scale to get model mm.
 PAPER = {"text": 2.5, "small": 1.8, "title": 3.5, "line": 0.25, "thin": 0.13,
          "margin": 12.0, "dim_gap": 7.0, "title_block": 16.0, "bubble": 3.0}
@@ -303,7 +306,7 @@ def floor_points(floor, walls):
                 pts += [leaf_end, add(leaf_end, sub(jamb, hinge))]
     for r in floor.get("rooms", []):
         pts += [tuple(p) for p in r.get("polygon", [])]
-    for s in floor.get("stairs", []) + floor.get("fixtures", []):
+    for s in floor.get("stairs", []) + floor.get("fixtures", []) + floor.get("furniture", []):
         pts += rect_points(s)
     return pts
 
@@ -394,11 +397,14 @@ def draw_room(r, k):
         return out
     size = PAPER["text"] * k
     top = anchor[1] + (len(lines_) - 1) * size * 0.6
-    for i, s in enumerate(lines_):
-        out.append(text((anchor[0], top - i * size * 1.2 - size * 0.35), s,
-                        size if i == 0 else PAPER["small"] * k,
-                        fill=COLORS["text"] if i == 0 else COLORS["muted"],
-                        font_weight="bold" if i == 0 else "normal"))
+    for halo in (True, False):  # white halo first, so labels stay readable over furniture
+        for i, s in enumerate(lines_):
+            extra = ({"stroke": "#ffffff", "stroke_width": f"{PAPER['thin'] * k * 3:.1f}",
+                      "stroke_linejoin": "round"} if halo else {})
+            out.append(text((anchor[0], top - i * size * 1.2 - size * 0.35), s,
+                            size if i == 0 else PAPER["small"] * k,
+                            fill=COLORS["text"] if i == 0 else COLORS["muted"],
+                            font_weight="bold" if i == 0 else "normal", **extra))
     return out
 
 
@@ -456,6 +462,9 @@ def draw_floor(layout, floor, walls, frame, k, grid=None):
             c = mul(add(pts[0], pts[2]), 0.5)
             out.append(text((c[0], c[1] - PAPER["small"] * k * 0.35), f["label"], PAPER["small"] * k * 0.85,
                             fill=COLORS["fixture"]))
+    out.append('</g><g id="furniture">')
+    for it in floor.get("furniture", []):
+        out += furniture.draw_item(it, k, PAPER["thin"])
     out.append('</g><g id="stairs">')
     for s in floor.get("stairs", []):
         out += draw_stairs(s, k)
@@ -546,6 +555,12 @@ def main():
             if "id" not in f:
                 raise LayoutError(f"floor {f.get('name', '?')!r} has no id")
             walls = build_walls(f)
+            for it in f.get("furniture", []):
+                if it.get("type") not in furniture.SYMBOLS:
+                    raise LayoutError(f"unknown furniture type {it.get('type')!r} on floor {f['id']} "
+                                      f"(known: {', '.join(sorted(furniture.SYMBOLS))})")
+                if str(it.get("facing", "S")).upper() not in ("N", "E", "S", "W"):
+                    raise LayoutError(f"furniture {it['type']} at ({it['x']}, {it['y']}): facing must be N/E/S/W")
             built.append((f, walls))
             all_pts += floor_points(f, walls)
             for _, _, c in floor_columns(grid, f):

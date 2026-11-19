@@ -40,6 +40,8 @@ The script needs Python 3 only. It checks the layout (unknown walls, openings th
 
 **Check the drawing yourself before showing it.** If you can view images, rasterize the SVG and look at it (`rsvg-convert -o floor-0.png floor-0.svg`, `inkscape floor-0.svg -o floor-0.png`, or a headless Chrome/Edge `--screenshot`). Check that rooms are closed, doors swing into sensible spaces, stairs line up between floors and labels don't collide.
 
+**Furnish every room** with `furniture` symbols, at real sizes, as an interior designer would: furniture shows whether a room actually works, which an empty outline or a labelled box doesn't. Place the furniture the brief asks for (bed and side tables, sofa and TV, dining for N, kitchen run, sanitary ware), then check the clearances: door swings stay clear, ≥ 0.9 m walkways and ≥ 1.0 m in front of wardrobes and kitchen runs, beds reachable from both sides, room labels not on top of furniture (`label_at`). If something doesn't fit, that is a finding about the plan; report it rather than shrinking the furniture.
+
 ## 3. Review with the user
 
 Show the plans: give the SVG paths (they open in any browser or IDE), and if your environment can display images or publish pages, show them inline as well. Summarise each floor in a few lines: rooms with areas, the total area and anything you decided on your own.
@@ -96,7 +98,8 @@ All coordinates are in mm, with x pointing east (right on the sheet) and y point
 | door/opening `height`; window `sill`, `head` | Heights above floor level in mm, for the model (defaults: door 2100, sill 900, head 2100) |
 | room `polygon` | Room outline along the **inner wall faces** (so areas are net floor areas); optional `label_at` |
 | stairs | Rectangle `x, y` (south-west corner), `w` (east–west), `d` (north–south); `up` is the climbing direction `N/S/E/W`; draw the stairs on every floor they connect, labelled `UP` below and `DN` above |
-| fixtures | Optional dashed rectangles for furniture or fittings that affect the layout |
+| fixtures | Optional dashed rectangles for things without a symbol (site elements, roof edges, zones) |
+| furniture | Optional drawn furniture symbols `{"type", "x", "y", "w", "d", "facing"}`: `x, y` is the south-west corner of the placed footprint, `w`/`d` its east–west/north–south size, `facing` (`N`/`E`/`S`/`W`, default `S`) the way its front points (seat side, foot of a bed, drawer fronts, player side of a piano, nose of a car). Types: `bed nightstand sofa sofa_l armchair chair stool table round_table coffee_table side_table desk tv cabinet sideboard wardrobe shelf tall counter sink hob appliance wc basin shower tub glass drain piano bench drums amp guitar rug plant tree palm car lounger daybed panel`. Extras: `table`/`round_table` `seats` (+ `ends`), `sofa_l` `return_side` (`left`/`right` as seen seated), `sink` `bowls`, `hob` `burners`, `basin` `basins`/`counter`, `desk` `chair`/`speakers`, `appliance` `drum`, any piece `label` |
 
 Keep wall ids stable between revisions so edits stay readable.
 

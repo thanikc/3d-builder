@@ -240,7 +240,17 @@ class DoorGeometry(unittest.TestCase):
 
 class DrawRoom(unittest.TestCase):
     def texts(self, items):
-        return [re.sub("<[^>]+>", "", s) for s in items]
+        """Visible label text, skipping the white halo copies drawn underneath."""
+        return [re.sub("<[^>]+>", "", s) for s in items if 'stroke="#ffffff"' not in s]
+
+    def test_labels_get_a_white_halo_drawn_first(self):
+        room = {"name": "Living", "polygon": [[0, 0], [5000, 0], [5000, 4000], [0, 4000]]}
+        items = dp.draw_room(room, 50)
+        self.assertEqual(len(items), 6)
+        self.assertTrue(all('stroke="#ffffff"' in s for s in items[:3]))
+        self.assertFalse(any("stroke=" in s for s in items[3:]))
+        self.assertEqual([re.sub("<[^>]+>", "", s) for s in items[:3]],
+                         [re.sub("<[^>]+>", "", s) for s in items[3:]])
 
     def test_rectangle_gets_name_area_and_size(self):
         room = {"name": "Living", "polygon": [[0, 0], [5000, 0], [5000, 4000], [0, 4000]]}
@@ -281,7 +291,8 @@ class DrawFloor(unittest.TestCase):
         root = ET.fromstring(self.render({"name": "Test", "scale": 50}, floor))
         self.assertEqual(root.tag, SVG_NS + "svg")
         groups = {g.get("id") for g in root.iter(SVG_NS + "g")}
-        self.assertTrue({"fixtures", "stairs", "walls", "openings", "rooms", "dimensions"} <= groups)
+        self.assertTrue({"fixtures", "furniture", "stairs", "walls", "openings", "rooms",
+                         "dimensions"} <= groups)
 
     def test_paper_size_follows_scale(self):
         root = ET.fromstring(self.render({"scale": 100}, box_floor()))
@@ -504,6 +515,136 @@ class GridTests(unittest.TestCase):
             code, _, err = run_main(p)
             self.assertEqual(code, 1)
             self.assertIn("increasing", err)
+
+
+fu = dp.furniture  # sibling module imported by draw_plans.py
+
+
+def apply_matrix(transform, u, v):
+    """Map local (u, v) through an SVG matrix(...) string, back to plan coords (y up)."""
+    a, b, c, d, e, f = map(float, re.findall(r"-?[\d.]+", transform))
+    return (a * u + c * v + e, -(b * u + d * v + f))
+
+
+class FurnitureSymbols(unittest.TestCase):
+    PIECE = {"x": 1000, "y": 2000, "w": 2000, "d": 1000}
+
+    def test_documented_types_match_symbols(self):
+        md = (SKILL / "references" / "floorplans.md").read_text(encoding="utf-8")
+        types = re.search(r"Types: `([^`]+)`", md).group(1).split()
+        self.assertEqual(sorted(types), sorted(fu.SYMBOLS))
+
+    def test_every_symbol_renders_valid_svg_in_every_facing(self):
+        for kind in fu.SYMBOLS:
+            for facing in "NESW":
+                with self.subTest(kind=kind, facing=facing):
+                    it = dict(self.PIECE, type=kind, facing=facing, label="A & B")
+                    svg = ('<svg xmlns="http://www.w3.org/2000/svg">'
+                           + "".join(fu.draw_item(it, 50, 0.13)) + "</svg>")
+                    root = ET.fromstring(svg)
+                    self.assertGreater(len(list(root.iter())), 2)
+
+    def test_local_size_swaps_for_east_and_west(self):
+        self.assertEqual(fu.local_size(dict(self.PIECE, facing="S")), (2000, 1000))
+        self.assertEqual(fu.local_size(dict(self.PIECE, facing="n")), (2000, 1000))
+        self.assertEqual(fu.local_size(dict(self.PIECE, facing="E")), (1000, 2000))
+        self.assertEqual(fu.local_size(dict(self.PIECE, facing="W")), (1000, 2000))
+        self.assertEqual(fu.local_size(self.PIECE), (2000, 1000))  # default S
+
+    def test_transform_fills_footprint_and_front_points_the_right_way(self):
+        x0, y0, x1, y1 = 1000, 2000, 3000, 3000
+        fronts = {"S": (2000, 2000), "N": (2000, 3000), "E": (3000, 2500), "W": (1000, 2500)}
+        for facing, front in fronts.items():
+            with self.subTest(facing=facing):
+                it = dict(self.PIECE, facing=facing)
+                W, D = fu.local_size(it)
+                m = fu.transform(it)
+                corners = [apply_matrix(m, u, v) for u, v in ((0, 0), (W, 0), (W, D), (0, D))]
+                self.assertEqual(dp.bounds(corners), (x0, y0, x1, y1))
+                fx, fy = apply_matrix(m, W / 2, 0)
+                self.assertAlmostEqual(fx, front[0])
+                self.assertAlmostEqual(fy, front[1])
+
+    def test_unknown_type_and_bad_facing_raise(self):
+        with self.assertRaisesRegex(ValueError, "unknown furniture type 'throne'"):
+            fu.draw_item(dict(self.PIECE, type="throne"), 50, 0.13)
+        with self.assertRaisesRegex(ValueError, "facing"):
+            fu.draw_item(dict(self.PIECE, type="bed", facing="NE"), 50, 0.13)
+
+    def test_label_is_escaped_and_centred(self):
+        out = fu.draw_item(dict(self.PIECE, type="cabinet", label="A & B"), 50, 0.13)
+        self.assertIn(">A &amp; B</text>", out[-1])
+        self.assertIn('x="2000.0"', out[-1])
+        self.assertNotIn("<text", "".join(fu.draw_item(dict(self.PIECE, type="cabinet"), 50, 0.13)))
+
+    def test_options_change_the_drawing(self):
+        def count(kind, tag, **opts):
+            return "".join(fu.draw_item(dict(self.PIECE, type=kind, **opts), 50, 0.13)).count(tag)
+        self.assertEqual(count("table", "<polygon"), 0)
+        self.assertEqual(count("table", "<polygon", seats=6), 12)  # 2 polygons per chair
+        self.assertEqual(count("table", "<polygon", seats=6, ends=True), 12)
+        self.assertEqual(count("round_table", "<polygon", seats=4), 8)
+        self.assertGreater(count("sink", "<rect", bowls=2), count("sink", "<rect"))
+        self.assertNotEqual(fu.draw_item(dict(self.PIECE, type="hob", burners=2), 50, 0.13),
+                            fu.draw_item(dict(self.PIECE, type="hob"), 50, 0.13))
+        self.assertGreater(count("basin", "<ellipse", basins=2), count("basin", "<ellipse"))
+        self.assertLess(count("desk", "<circle", chair=False), count("desk", "<circle"))
+        self.assertGreater(count("desk", "<rect", speakers=True), count("desk", "<rect"))
+        self.assertGreater(count("appliance", "<circle", drum=True), count("appliance", "<circle"))
+        self.assertNotEqual(
+            "".join(fu.draw_item(dict(self.PIECE, d=2000, type="sofa_l", return_side="left"), 50, 0.13)),
+            "".join(fu.draw_item(dict(self.PIECE, d=2000, type="sofa_l", return_side="right"), 50, 0.13)))
+
+
+class FurnitureInPlans(unittest.TestCase):
+    BED = {"type": "bed", "x": 1000, "y": 1000, "w": 1600, "d": 2000, "facing": "S"}
+
+    def test_floor_draws_furniture_group_above_fixtures_below_stairs(self):
+        floor = box_floor(furniture=[self.BED], fixtures=[{"x": 0, "y": 0, "w": 100, "d": 100}],
+                          stairs=[{"x": 4000, "y": 500, "w": 1000, "d": 2500, "up": "N"}])
+        svg = DrawFloor().render({}, floor)
+        ET.fromstring(svg)
+        group = re.search(r'<g id="furniture">(.*?)</g><g id="stairs">', svg, re.S).group(1)
+        self.assertIn("matrix(", group)
+        self.assertLess(svg.index('id="fixtures"'), svg.index('id="furniture"'))
+
+    def test_furniture_extends_the_frame(self):
+        floor = box_floor(furniture=[dict(self.BED, type="car", x=-4000, y=-6000, w=1800, d=4500)])
+        walls = dp.build_walls(floor)
+        x0, y0, _, _ = dp.bounds(dp.floor_points(floor, walls))
+        self.assertEqual((x0, y0), (-4000, -6000))
+
+    def run_layout(self, furniture):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "layout.json"
+            p.write_text(json.dumps({"floors": [box_floor(furniture=furniture)]}), encoding="utf-8")
+            code, out, err = run_main(p)
+            svgs = list(Path(tmp).glob("*.svg"))
+            return code, err, svgs
+
+    def test_cli_renders_furniture(self):
+        code, err, svgs = self.run_layout([self.BED, dict(self.BED, type="wardrobe", facing="e")])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(svgs), 1)
+
+    def test_cli_rejects_unknown_furniture_type(self):
+        code, err, svgs = self.run_layout([dict(self.BED, type="throne")])
+        self.assertEqual(code, 1)
+        self.assertIn("unknown furniture type 'throne' on floor 0", err)
+        self.assertEqual(svgs, [])
+
+    def test_cli_rejects_bad_facing(self):
+        code, err, svgs = self.run_layout([dict(self.BED, facing="up")])
+        self.assertEqual(code, 1)
+        self.assertIn("facing must be N/E/S/W", err)
+        self.assertEqual(svgs, [])
+
+    def test_cli_reports_missing_size(self):
+        bed = dict(self.BED)
+        del bed["w"]
+        code, err, svgs = self.run_layout([bed])
+        self.assertEqual(code, 1)
+        self.assertIn("error:", err)
 
 
 class DocumentedExample(unittest.TestCase):
