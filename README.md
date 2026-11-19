@@ -68,7 +68,7 @@ The questions stop when nothing is left unclear or when you choose to stop answe
 If the model is a building, the agent works out the layout with you before it builds anything:
 
 1. It asks about floors, footprint, rooms, stairs, doors and windows, following the same one-question-at-a-time rules.
-2. It writes the layout to `models/<name>/plans/layout.json` and turns it into an SVG plan for each floor with the bundled `draw_plans.py` script, which needs Python 3 only. Each plan shows the walls, door swings, windows, stairs, room names with areas, overall dimensions and a scale bar.
+2. It writes the layout to `models/<name>/plans/layout.json` and turns it into an SVG plan for each floor with the bundled `draw_plans.py` script, which needs Python 3 only. Each plan shows the walls, door swings, windows, stairs, room names with areas, overall dimensions, a scale bar and, for framed houses, a column grid with labelled axes and columns.
 3. It shows you the plans and revises them until you approve. Then it builds the 3D model from the same `layout.json`, so the model matches the plans exactly.
 
 When you later change a building, the plans are updated and approved first, and only then is the model changed.

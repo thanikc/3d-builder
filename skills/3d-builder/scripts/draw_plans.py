@@ -6,6 +6,7 @@ Usage:
 
 Checks the layout for errors, writes one SVG per floor to <out>/floor-<id>.svg
 (default <out>: the folder of the JSON file) and prints the room areas per floor.
+An optional structural grid (axes 1, 2, 3 / A, B, C with columns) is drawn on every floor.
 All floors share the same frame, so the sheets line up when overlaid.
 Layout format: see references/floorplans.md.
 """
@@ -18,10 +19,11 @@ from xml.sax.saxutils import escape
 
 # Sizes on paper in mm. Multiplied by the drawing scale to get model mm.
 PAPER = {"text": 2.5, "small": 1.8, "title": 3.5, "line": 0.25, "thin": 0.13,
-         "margin": 12.0, "dim_gap": 7.0, "title_block": 16.0}
+         "margin": 12.0, "dim_gap": 7.0, "title_block": 16.0, "bubble": 3.0}
 EPS = 1.0  # mm: wall endpoints closer than this count as joined
 COLORS = {"exterior": "#222222", "interior": "#555555", "window": "#2b6cb0",
-          "dim": "#444444", "fixture": "#888888", "text": "#111111", "muted": "#666666"}
+          "dim": "#444444", "fixture": "#888888", "text": "#111111", "muted": "#666666",
+          "grid": "#c05621", "column": "#111111"}
 
 
 class LayoutError(Exception):
@@ -132,6 +134,140 @@ def build_walls(floor):
             if o1["offset"] + o1["width"] > o2["offset"] + 0.01:
                 raise LayoutError(f"openings overlap on wall {w.id} at offset {o2['offset']:.0f}")
     return walls
+
+
+def grid_labels(n, letters):
+    """Default grid labels: 1, 2, 3 ... or A, B, ... Z, AA, AB ..."""
+    if not letters:
+        return [str(i + 1) for i in range(n)]
+    out = []
+    for i in range(n):
+        s, i = "", i + 1
+        while i:
+            i, r = divmod(i - 1, 26)
+            s = chr(65 + r) + s
+        out.append(s)
+    return out
+
+
+def parse_grid(d):
+    """Validate the layout's "grid" and return it normalised, or None if there is none.
+
+    x lines run north-south (numbered 1, 2, 3 ...), y lines run east-west (lettered A, B, C ...).
+    """
+    if not d:
+        return None
+    g = {}
+    for axis, letters in (("x", False), ("y", True)):
+        pos = [float(v) for v in d.get(axis, [])]
+        if any(b <= a for a, b in zip(pos, pos[1:])):
+            raise LayoutError(f"grid {axis} positions must be in increasing order")
+        labels = [str(v) for v in d.get(axis + "_labels", grid_labels(len(pos), letters))]
+        if len(labels) != len(pos):
+            raise LayoutError(f"grid has {len(pos)} {axis} lines but {len(labels)} {axis}_labels")
+        g[axis] = list(zip(labels, pos))
+    if not g["x"] and not g["y"]:
+        raise LayoutError("grid has no x or y lines")
+    names = [n for n, _ in g["x"] + g["y"]]
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    if dupes:
+        raise LayoutError(f"duplicate grid labels {', '.join(dupes)}")
+    col = d.get("column", {})
+    if "diameter" in col:
+        g["column"] = {"shape": "round", "w": float(col["diameter"]), "d": float(col["diameter"])}
+    else:
+        g["column"] = {"shape": "square", "w": float(col.get("w", 300)), "d": float(col.get("d", col.get("w", 300)))}
+    g["columns"] = grid_columns(g, d.get("columns", []), "grid")
+    return g
+
+
+def grid_columns(g, spec, where):
+    """Column centres from "all" or a list of [x label, y label] pairs."""
+    xs, ys = dict(g["x"]), dict(g["y"])
+    if spec == "all":
+        return [(xl, yl, (x, y)) for yl, y in g["y"] for xl, x in g["x"]]
+    out = []
+    for c in spec:
+        if not isinstance(c, (list, tuple)) or len(c) != 2:
+            raise LayoutError(f'{where} column {c!r} must be "all" or [x label, y label] like ["1", "A"]')
+        xl, yl = str(c[0]), str(c[1])
+        if xl not in xs or yl not in ys:
+            raise LayoutError(f"{where} column {[xl, yl]} refers to an unknown grid line")
+        out.append((xl, yl, (xs[xl], ys[yl])))
+    return out
+
+
+def floor_columns(grid, floor):
+    """The columns on this floor: the floor's own "columns" if given, else the grid's."""
+    if not grid:
+        if "columns" in floor:
+            raise LayoutError(f"floor {floor.get('id')} has columns but the layout has no grid")
+        return []
+    if "columns" in floor:
+        return grid_columns(grid, floor["columns"], f"floor {floor.get('id')}")
+    return grid["columns"]
+
+
+def column_rect(grid, c):
+    w, d = grid["column"]["w"], grid["column"]["d"]
+    return {"x": c[0] - w / 2, "y": c[1] - d / 2, "w": w, "d": d}
+
+
+def grid_points(grid):
+    """Corners spanned by the grid lines and columns, so the frame includes them."""
+    xs = [x for _, x in grid["x"]]
+    ys = [y for _, y in grid["y"]]
+    pts = [(x, y) for x in xs for y in ys] or [(x, 0.0) for x in xs] or [(0.0, y) for y in ys]
+    for _, _, c in grid["columns"]:
+        pts += rect_points(column_rect(grid, c))
+    return pts
+
+
+def draw_grid(grid, frame, k):
+    """Dash-dot grid lines with labelled bubbles and spacing dimensions above and right of the frame."""
+    fx0, fy0, fx1, fy1 = frame
+    g, r = PAPER["dim_gap"] * k, PAPER["bubble"] * k
+    sw = f"{PAPER['thin'] * k:.1f}"
+    dash = f"{4 * k:.1f} {k:.1f} {0.6 * k:.1f} {k:.1f}"
+    out = ['<g id="grid">']
+    for axis in ("x", "y"):
+        lines_ = grid[axis]
+        for label, v in lines_:
+            if axis == "x":
+                a, b, c = (v, fy0), (v, fy1 + 2 * g), (v, fy1 + 2 * g + r)
+            else:
+                a, b, c = (fx0, v), (fx1 + 2 * g, v), (fx1 + 2 * g + r, v)
+            out.append(line(a, b, stroke=COLORS["grid"], stroke_width=sw, stroke_dasharray=dash))
+            out.append(f'<circle cx="{c[0]:.1f}" cy="{-c[1]:.1f}" r="{r:.1f}" fill="#ffffff" '
+                       f'stroke="{COLORS["grid"]}" stroke-width="{PAPER["line"] * k:.1f}"/>')
+            size = PAPER["text"] * k * (1 if len(label) < 3 else 0.7)
+            out.append(text((c[0], c[1] - size * 0.35), label, size, fill=COLORS["grid"], font_weight="bold"))
+        for (_, v0), (_, v1) in zip(lines_, lines_[1:]):
+            if axis == "x":
+                out += draw_dimension((v0, fy1), (v1, fy1), (0, g), metres(v1 - v0), k)
+            else:
+                out += draw_dimension((fx1, v0), (fx1, v1), (g, 0), metres(v1 - v0), k)
+    out.append('</g>')
+    return out
+
+
+def draw_column(grid, c, k):
+    """A column as a white square or circle with a cross, visible on top of walls."""
+    w, d = grid["column"]["w"], grid["column"]["d"]
+    x, y = c
+    sw = f"{PAPER['line'] * k:.1f}"
+    thin = f"{PAPER['thin'] * k:.1f}"
+    if grid["column"]["shape"] == "round":
+        r = w / 2
+        q = r * math.sqrt(0.5)
+        return [f'<circle cx="{x:.1f}" cy="{-y:.1f}" r="{r:.1f}" fill="#ffffff" stroke="{COLORS["column"]}" '
+                f'stroke-width="{sw}"/>',
+                line((x - q, y - q), (x + q, y + q), stroke=COLORS["column"], stroke_width=thin),
+                line((x - q, y + q), (x + q, y - q), stroke=COLORS["column"], stroke_width=thin)]
+    pts = rect_points(column_rect(grid, c))
+    return [poly(pts, fill="#ffffff", stroke=COLORS["column"], stroke_width=sw),
+            line(pts[0], pts[2], stroke=COLORS["column"], stroke_width=thin),
+            line(pts[1], pts[3], stroke=COLORS["column"], stroke_width=thin)]
 
 
 def area_and_centroid(points):
@@ -297,17 +433,20 @@ def nice_bar(width):
     return 500
 
 
-def draw_floor(layout, floor, walls, frame, k):
+def draw_floor(layout, floor, walls, frame, k, grid=None):
     fx0, fy0, fx1, fy1 = frame
     m, g, tb = PAPER["margin"] * k, PAPER["dim_gap"] * k, PAPER["title_block"] * k
     vx0, vy0 = fx0 - m - 2 * g, fy0 - m - 2 * g - tb
-    vx1, vy1 = fx1 + m, fy1 + m
+    extra = 2 * g + 2 * PAPER["bubble"] * k if grid else 0.0  # room for grid bubbles and spacings
+    vx1, vy1 = fx1 + m + extra, fy1 + m + extra
     vw, vh = vx1 - vx0, vy1 - vy0
     out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{vw / k:.1f}mm" height="{vh / k:.1f}mm" '
            f'viewBox="{vx0:.1f} {-vy1:.1f} {vw:.1f} {vh:.1f}" font-family="Helvetica, Arial, sans-serif">',
            f'<title>{escape(layout.get("name", "Plan"))} — {escape(floor.get("name", "Floor " + str(floor["id"])))}</title>',
            f'<rect x="{vx0:.1f}" y="{-vy1:.1f}" width="{vw:.1f}" height="{vh:.1f}" fill="#ffffff"/>']
 
+    if grid:
+        out += draw_grid(grid, frame, k)
     out.append('<g id="fixtures">')
     for f in floor.get("fixtures", []):
         pts = rect_points(f)
@@ -325,6 +464,11 @@ def draw_floor(layout, floor, walls, frame, k):
         color = COLORS["exterior"] if w.type == "exterior" else COLORS["interior"]
         for s0, s1 in w.pieces():
             out.append(poly(w.quad(s0, s1), fill=color, stroke=color, stroke_width=f"{PAPER['thin'] * k * 0.5:.1f}"))
+    columns = floor_columns(grid, floor)
+    if columns:
+        out.append('</g><g id="columns">')
+        for _, _, c in columns:
+            out += draw_column(grid, c, k)
     out.append('</g><g id="openings">')
     for w in walls.values():
         for o in w.openings:
@@ -396,13 +540,16 @@ def main():
         if not floors:
             raise LayoutError("layout has no floors")
         k = float(layout.get("scale", 50))
-        built, all_pts = [], []
+        grid = parse_grid(layout.get("grid"))
+        built, all_pts = [], grid_points(grid) if grid else []
         for f in floors:
             if "id" not in f:
                 raise LayoutError(f"floor {f.get('name', '?')!r} has no id")
             walls = build_walls(f)
             built.append((f, walls))
             all_pts += floor_points(f, walls)
+            for _, _, c in floor_columns(grid, f):
+                all_pts += rect_points(column_rect(grid, c))
         if not all_pts:
             raise LayoutError("layout has no geometry")
         frame = bounds(all_pts)
@@ -414,8 +561,11 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     for f, walls in built:
         path = out_dir / f"floor-{f['id']}.svg"
-        path.write_text(draw_floor(layout, f, walls, frame, k), encoding="utf-8")
+        path.write_text(draw_floor(layout, f, walls, frame, k, grid), encoding="utf-8")
         print(f"{path}  ({f.get('name', '')})")
+        columns = floor_columns(grid, f)
+        if columns:
+            print(f"    {'columns':<24} {len(columns):6d}")
         total = 0.0
         for r in f.get("rooms", []):
             if len(r.get("polygon", [])) >= 3:

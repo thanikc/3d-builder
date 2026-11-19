@@ -419,6 +419,93 @@ class MainCli(unittest.TestCase):
         self.assert_error({"floors": [box_floor("0"), bad]}, "does not fit")
 
 
+class GridTests(unittest.TestCase):
+    GRID = {"x": [0, 3000, 6000], "y": [0, 4000], "columns": "all"}
+
+    def render(self, grid_spec, floor=None):
+        floor = floor or box_floor()
+        grid = dp.parse_grid(grid_spec)
+        walls = dp.build_walls(floor)
+        frame = dp.bounds(dp.floor_points(floor, walls) + dp.grid_points(grid))
+        return ET.fromstring(dp.draw_floor({}, floor, walls, frame, 50, grid))
+
+    def test_default_labels(self):
+        self.assertEqual(dp.grid_labels(3, False), ["1", "2", "3"])
+        self.assertEqual(dp.grid_labels(28, True)[:3], ["A", "B", "C"])
+        self.assertEqual(dp.grid_labels(28, True)[-2:], ["AA", "AB"])
+
+    def test_parse_grid_defaults(self):
+        g = dp.parse_grid(self.GRID)
+        self.assertEqual(g["x"], [("1", 0), ("2", 3000), ("3", 6000)])
+        self.assertEqual(g["y"], [("A", 0), ("B", 4000)])
+        self.assertEqual(g["column"], {"shape": "square", "w": 300, "d": 300})
+        self.assertEqual(len(g["columns"]), 6)
+        self.assertIsNone(dp.parse_grid(None))
+
+    def test_custom_labels_and_round_columns(self):
+        g = dp.parse_grid({"x": [0, 5000], "x_labels": ["G1", "G2"], "y": [0],
+                           "column": {"diameter": 250}, "columns": [["G2", "A"]]})
+        self.assertEqual(g["columns"], [("G2", "A", (5000, 0))])
+        self.assertEqual(g["column"]["shape"], "round")
+
+    def test_parse_grid_errors(self):
+        cases = [({"x": [0, 0]}, "increasing"),
+                 ({"x": [0, 1000], "x_labels": ["1"]}, "x_labels"),
+                 ({"x": [0], "y": [0], "x_labels": ["A"]}, "duplicate grid labels A"),
+                 ({"x": [], "y": []}, "no x or y lines"),
+                 ({"x": [0], "y": [0], "columns": [["9", "A"]]}, "unknown grid line"),
+                 ({"x": [0], "y": [0], "columns": ["1A"]}, "must be")]
+        for spec, msg in cases:
+            with self.subTest(spec=spec):
+                with self.assertRaisesRegex(dp.LayoutError, msg):
+                    dp.parse_grid(spec)
+
+    def test_draws_lines_bubbles_spacings_and_columns(self):
+        root = self.render(self.GRID)
+        groups = {g.get("id"): g for g in root.iter(SVG_NS + "g")}
+        grid = groups["grid"]
+        self.assertEqual(len(grid.findall(SVG_NS + "circle")), 5)
+        labels = {t.text for t in grid.iter(SVG_NS + "text")}
+        self.assertTrue({"1", "2", "3", "A", "B", "3.00 m", "4.00 m"} <= labels)
+        self.assertEqual(len(groups["columns"].findall(SVG_NS + "polygon")), 6)
+
+    def test_grid_widens_sheet(self):
+        plain = ET.fromstring(DrawFloor().render({}, box_floor()))
+        with_grid = self.render({"x": [0, 6000], "y": [0, 4000]})
+        w = lambda r: float(r.get("viewBox").split()[2])
+        self.assertGreater(w(with_grid), w(plain))
+        self.assertNotIn("columns", {g.get("id") for g in with_grid.iter(SVG_NS + "g")})
+
+    def test_floor_overrides_columns(self):
+        g = dp.parse_grid(self.GRID)
+        self.assertEqual(len(dp.floor_columns(g, {"id": "1"})), 6)
+        self.assertEqual(dp.floor_columns(g, {"id": "1", "columns": []}), [])
+        self.assertEqual(len(dp.floor_columns(g, {"id": "1", "columns": [["1", "A"]]})), 1)
+        with self.assertRaisesRegex(dp.LayoutError, "no grid"):
+            dp.floor_columns(None, {"id": "1", "columns": "all"})
+
+    def test_cli_draws_grid_on_every_floor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "layout.json"
+            p.write_text(json.dumps({"grid": self.GRID, "floors": [
+                box_floor("0"), box_floor("1", columns=[["2", "B"]])]}), encoding="utf-8")
+            code, out, err = run_main(p)
+            self.assertEqual(code, 0, err)
+            self.assertIn("columns                       6", out)
+            self.assertIn("columns                       1", out)
+            for fid in "01":
+                root = ET.parse(Path(tmp) / f"floor-{fid}.svg").getroot()
+                self.assertIn("grid", {g.get("id") for g in root.iter(SVG_NS + "g")})
+
+    def test_cli_reports_grid_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "layout.json"
+            p.write_text(json.dumps({"grid": {"x": [5, 1]}, "floors": [box_floor()]}), encoding="utf-8")
+            code, _, err = run_main(p)
+            self.assertEqual(code, 1)
+            self.assertIn("increasing", err)
+
+
 class DocumentedExample(unittest.TestCase):
     """The example layout in references/floorplans.md must stay valid."""
 
@@ -433,6 +520,19 @@ class DocumentedExample(unittest.TestCase):
             self.assertEqual(code, 0, err)
             ET.parse(Path(tmp) / "floor-0.svg")
             self.assertIn("Living", out)
+
+    def test_floorplans_grid_example_renders(self):
+        md = (SKILL / "references" / "floorplans.md").read_text(encoding="utf-8")
+        blocks = re.findall(r"```json\n(.*?)```", md, re.S)
+        layout = json.loads(blocks[0])
+        layout.update(json.loads(blocks[1]))
+        self.assertIn("grid", layout)
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "layout.json"
+            p.write_text(json.dumps(layout), encoding="utf-8")
+            code, out, err = run_main(p)
+            self.assertEqual(code, 0, err)
+            self.assertIn("columns", out)
 
 
 if __name__ == "__main__":

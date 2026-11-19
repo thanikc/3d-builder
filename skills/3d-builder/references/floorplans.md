@@ -13,8 +13,9 @@ This uses the same rules as the clarifying questions: one question at a time, ye
 3. Room programme per floor: which rooms there are and their rough size (m² or "small/medium/large")
 4. Adjacency: what must be next to what (kitchen beside dining, bathroom near the bedrooms, entrance into a hall)
 5. Entrance(s) and stairs: position, straight or L-shaped stairs
-6. Wall thickness (exterior/interior), doors and windows (sizes, sill heights, which rooms need daylight)
-7. Roof type and overhang. The roof doesn't go in the plans, but it affects the top floor.
+6. Structure: load-bearing walls only, or a column grid (spacing, column size)? See "Column grid" below
+7. Wall thickness (exterior/interior), doors and windows (sizes, sill heights, which rooms need daylight)
+8. Roof type and overhang. The roof doesn't go in the plans, but it affects the top floor.
 
 Don't ask for coordinates. Propose a layout instead, because a user can react to a drawing far more easily than to an abstract question. If the programme is clear after 2–3 questions, draw a first version and refine it from there.
 
@@ -98,6 +99,33 @@ All coordinates are in mm, with x pointing east (right on the sheet) and y point
 | fixtures | Optional dashed rectangles for furniture or fittings that affect the layout |
 
 Keep wall ids stable between revisions so edits stay readable.
+
+### Column grid
+
+For a house with a structural frame (concrete, steel or timber columns), plan the column grid first and fit the walls to it. Add a top-level `grid` to the layout:
+
+```json
+{
+  "grid": {
+    "x": [0, 5000, 9000],
+    "y": [0, 3500, 7000],
+    "column": {"w": 300, "d": 300},
+    "columns": "all"
+  }
+}
+```
+
+The grid is drawn on every floor in the same place: dash-dot axis lines with labelled bubbles above and to the right of the plan, a dimension chain of the grid spacings, and the columns as crossed squares (or circles) on top of the walls. The script prints the column count per floor.
+
+| Field | Meaning |
+|---|---|
+| `x`, `y` | Grid line positions in mm, increasing. `x` lines run north–south, `y` lines east–west. Either may be empty |
+| `x_labels`, `y_labels` | Optional labels, one per line. Defaults: `x` → `1, 2, 3 …`, `y` → `A, B, C …` |
+| `column` | Column size: `{"w": 300, "d": 300}` for a rectangle (default 300 × 300) or `{"diameter": 300}` for a round column |
+| `columns` | `"all"` for a column at every intersection, or a list of intersections like `[["1", "A"], ["3", "C"]]`. Default: none |
+| floor `columns` | Optional, same format: overrides the grid's columns on that floor, e.g. fewer columns on the top floor, `[]` for none |
+
+When choosing spans, keep typical residential limits in mind (roughly 4–6 m for concrete or timber beams) and put columns inside walls or at wall corners where possible. Record the grid spacing and column size in the spec. When building the model, add each column as a box (or cylinder) at its intersection, from `elevation` to `elevation + height` on every floor it appears on.
 
 ## 4. Build the model from the layout
 
