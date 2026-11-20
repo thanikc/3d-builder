@@ -2,6 +2,6 @@ schema_version: "1.1"
 name: blender-cabin-floor-plans
 expected_outcome: |
   For a building, the agent writes the spec, records the stated programme as Decisions, writes
-  models/<name>/plans/layout.json in the documented format with every room furnished (a trough basin in the bathroom) and the outdoor deck drawn as a filled area, generates floor-0.svg and floor-1.svg with the bundled
+  models/<name>/plans/layout.json in the documented format with every room furnished (a trough basin in the bathroom, a mirror-door wardrobe and a writing desk without a monitor upstairs) and the outdoor deck drawn as a filled area, generates floor-0.svg and floor-1.svg with the bundled
   draw_plans.py, checks that the furniture fits, summarises each floor with room areas and asks the user to approve the plans. It does not open
   Blender or write modelling code before approval.

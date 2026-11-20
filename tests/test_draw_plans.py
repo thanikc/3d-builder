@@ -465,11 +465,37 @@ class GridTests(unittest.TestCase):
                  ({"x": [0], "y": [0], "x_labels": ["A"]}, "duplicate grid labels A"),
                  ({"x": [], "y": []}, "no x or y lines"),
                  ({"x": [0], "y": [0], "columns": [["9", "A"]]}, "unknown grid line"),
-                 ({"x": [0], "y": [0], "columns": ["1A"]}, "must be")]
+                 ({"x": [0], "y": [0], "columns": ["1A"]}, "must be"),
+                 ({"x": [0], "y": [0], "columns": [["1", "A", 400]]}, "must be")]
         for spec, msg in cases:
             with self.subTest(spec=spec):
                 with self.assertRaisesRegex(dp.LayoutError, msg):
                     dp.parse_grid(spec)
+
+    def test_column_with_its_own_size(self):
+        g = dp.parse_grid({"x": [0, 6000], "y": [0], "columns": [["1", "A"], ["2", "A", 400, "600"]]})
+        self.assertEqual(g["columns"], [("1", "A", (0, 0)), ("2", "A", (6000, 0, 400.0, 600.0))])
+        self.assertEqual(dp.column_rect(g, g["columns"][0][2]), {"x": -150, "y": -150, "w": 300, "d": 300})
+        self.assertEqual(dp.column_rect(g, g["columns"][1][2]), {"x": 5800, "y": -300, "w": 400, "d": 600})
+        self.assertIn((6200, 300), dp.grid_points(g))  # frame reaches the bigger column
+        on_floor = dp.floor_columns(g, {"id": "1", "columns": [["2", "A", 500, 500]]})
+        self.assertEqual(on_floor, [("2", "A", (6000, 0, 500.0, 500.0))])
+
+    def test_sized_columns_are_drawn_at_their_size(self):
+        root = self.render({"x": [0, 6000], "y": [0], "columns": [["1", "A"], ["2", "A", 400, 600]]})
+        groups = {g.get("id"): g for g in root.iter(SVG_NS + "g")}
+        sizes = []
+        for poly in groups["columns"].findall(SVG_NS + "polygon"):
+            pts = [tuple(map(float, xy.split(","))) for xy in poly.get("points").split()]
+            xs, ys = [x for x, _ in pts], [y for _, y in pts]
+            sizes.append((round(max(xs) - min(xs)), round(max(ys) - min(ys))))
+        self.assertEqual(sorted(sizes), [(300, 300), (400, 600)])
+
+        root = self.render({"x": [0, 6000], "y": [0], "column": {"diameter": 250},
+                            "columns": [["1", "A"], ["2", "A", 500, 500]]})
+        groups = {g.get("id"): g for g in root.iter(SVG_NS + "g")}
+        radii = sorted(float(c.get("r")) for c in groups["columns"].findall(SVG_NS + "circle"))
+        self.assertEqual(radii, [125, 250])
 
     def test_draws_lines_bubbles_spacings_and_columns(self):
         root = self.render(self.GRID)
@@ -594,6 +620,14 @@ class FurnitureSymbols(unittest.TestCase):
         self.assertEqual(count("basin", "<circle", trough=True), 1)  # single tap
         self.assertLess(count("desk", "<circle", chair=False), count("desk", "<circle"))
         self.assertGreater(count("desk", "<rect", speakers=True), count("desk", "<rect"))
+        self.assertEqual(count("desk", "<rect", monitor=False), count("desk", "<rect") - 1)  # no screen
+        self.assertEqual(count("desk", "<rect", monitor=False, speakers=True),
+                         count("desk", "<rect", speakers=True) - 1)
+        self.assertNotIn("#555555", "".join(fu.draw_item(dict(self.PIECE, type="desk", monitor=False), 50, 0.13)))
+        self.assertEqual(count("wardrobe", "stroke-dasharray", doors="mirror"), 0)  # no hanging rail
+        self.assertGreater(count("wardrobe", "stroke-dasharray"), 0)
+        self.assertEqual(count("wardrobe", "<rect", doors="mirror"), 2)  # carcass and door panel
+        self.assertGreater(count("wardrobe", "<line", doors="mirror"), 4)  # leaf split and hatching
         self.assertGreater(count("appliance", "<circle", drum=True), count("appliance", "<circle"))
         self.assertNotEqual(
             "".join(fu.draw_item(dict(self.PIECE, d=2000, type="sofa_l", return_side="left"), 50, 0.13)),

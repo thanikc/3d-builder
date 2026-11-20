@@ -190,7 +190,8 @@ def desk(p, W, D, it):
                f"{cu + cw / 2 - 40:.1f} {cv + 120:.1f}", sw=p.sw * 2.2)
     p.rect(0, 0, W, D)
     mw = min(W * 0.55, it.get("screen", 1050))
-    p.rect(W / 2 - mw / 2, D - 160, mw, 50, fill="#555555", stroke="#555555")  # screen
+    if it.get("monitor", True):
+        p.rect(W / 2 - mw / 2, D - 160, mw, 50, fill="#555555", stroke="#555555")  # screen
     if it.get("speakers"):
         for u in (W / 2 - mw / 2 - 260, W / 2 + mw / 2 + 80):
             p.rect(u, D - 280, 180, 220, fill=TOP)
@@ -214,6 +215,18 @@ def cabinet(p, W, D, it):
 
 def wardrobe(p, W, D, it):
     p.rect(0, 0, W, D)
+    if it.get("doors") == "mirror":
+        # two sliding mirror doors across the front (the long side, v = 0): panel
+        # split at mid-width, with a diagonal mirror hatch on each leaf
+        d = D * 0.18
+        p.rect(0, 0, W, d)
+        p.line(W / 2, 0, W / 2, D, sw=p.sw * 1.6)
+        for leaf in (0, W / 2):
+            u = leaf
+            while u < leaf + W / 2 - 1:
+                p.line(u, 0, u + d, d, sw=p.sw * 0.4)
+                u += 220
+        return
     p.line(0, D / 2, W, D / 2, dash=f"{p.sw * 6:.0f} {p.sw * 3:.0f}")      # rail
     step = 160
     u = step / 2

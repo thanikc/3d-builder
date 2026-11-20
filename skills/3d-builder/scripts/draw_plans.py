@@ -191,12 +191,14 @@ def grid_columns(g, spec, where):
         return [(xl, yl, (x, y)) for yl, y in g["y"] for xl, x in g["x"]]
     out = []
     for c in spec:
-        if not isinstance(c, (list, tuple)) or len(c) != 2:
-            raise LayoutError(f'{where} column {c!r} must be "all" or [x label, y label] like ["1", "A"]')
+        if not isinstance(c, (list, tuple)) or len(c) not in (2, 4):
+            raise LayoutError(f'{where} column {c!r} must be "all" or [x label, y label] like ["1", "A"], '
+                              f'optionally with [x label, y label, w, d] for a non-standard size in mm')
         xl, yl = str(c[0]), str(c[1])
         if xl not in xs or yl not in ys:
             raise LayoutError(f"{where} column {[xl, yl]} refers to an unknown grid line")
-        out.append((xl, yl, (xs[xl], ys[yl])))
+        size = tuple(float(v) for v in c[2:]) if len(c) == 4 else ()
+        out.append((xl, yl, (xs[xl], ys[yl]) + size))
     return out
 
 
@@ -212,7 +214,8 @@ def floor_columns(grid, floor):
 
 
 def column_rect(grid, c):
-    w, d = grid["column"]["w"], grid["column"]["d"]
+    """c = (x, y) for a standard column, or (x, y, w, d) for one with its own size."""
+    w, d = (c[2], c[3]) if len(c) == 4 else (grid["column"]["w"], grid["column"]["d"])
     return {"x": c[0] - w / 2, "y": c[1] - d / 2, "w": w, "d": d}
 
 
@@ -256,12 +259,11 @@ def draw_grid(grid, frame, k):
 
 def draw_column(grid, c, k):
     """A column as a white square or circle with a cross, visible on top of walls."""
-    w, d = grid["column"]["w"], grid["column"]["d"]
-    x, y = c
+    x, y = c[0], c[1]
     sw = f"{PAPER['line'] * k:.1f}"
     thin = f"{PAPER['thin'] * k:.1f}"
     if grid["column"]["shape"] == "round":
-        r = w / 2
+        r = column_rect(grid, c)["w"] / 2
         q = r * math.sqrt(0.5)
         return [f'<circle cx="{x:.1f}" cy="{-y:.1f}" r="{r:.1f}" fill="#ffffff" stroke="{COLORS["column"]}" '
                 f'stroke-width="{sw}"/>',
