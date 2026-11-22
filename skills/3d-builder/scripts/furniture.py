@@ -42,9 +42,9 @@ class Pen:
     def circle(self, u, v, r, fill=FILL, stroke=INK, sw=None, dash=None):
         self.out.append(f'<circle cx="{u:.1f}" cy="{v:.1f}" r="{r:.1f}"{self._a(fill, stroke, sw, dash)}/>')
 
-    def ellipse(self, u, v, rx, ry, fill=FILL, stroke=INK, sw=None):
+    def ellipse(self, u, v, rx, ry, fill=FILL, stroke=INK, sw=None, dash=None):
         self.out.append(f'<ellipse cx="{u:.1f}" cy="{v:.1f}" rx="{rx:.1f}" ry="{ry:.1f}"'
-                        f'{self._a(fill, stroke, sw, None)}/>')
+                        f'{self._a(fill, stroke, sw, dash)}/>')
 
     def line(self, u1, v1, u2, v2, stroke=INK, sw=None, dash=None):
         self.out.append(f'<line x1="{u1:.1f}" y1="{v1:.1f}" x2="{u2:.1f}" y2="{v2:.1f}"'
@@ -189,7 +189,7 @@ def desk(p, W, D, it):
         p.path(f"M {cu - cw / 2 + 40:.1f} {cv + 120:.1f} Q {cu:.1f} {cv + cw / 2 + 60:.1f} "
                f"{cu + cw / 2 - 40:.1f} {cv + 120:.1f}", sw=p.sw * 2.2)
     p.rect(0, 0, W, D)
-    mw = min(W * 0.55, it.get("screen", 1050))
+    mw = min(W * 0.55, it.get("screen", 1050))  # also places the speakers
     if it.get("monitor", True):
         p.rect(W / 2 - mw / 2, D - 160, mw, 50, fill="#555555", stroke="#555555")  # screen
     if it.get("speakers"):
@@ -198,11 +198,30 @@ def desk(p, W, D, it):
 
 
 def tv(p, W, D, it):
+    if D <= 150:
+        # Wall- or screen-mounted flat panel (front at v = 0, mount back to v = D)
+        panel_d = min(D, 40)
+        p.rect(0, 0, W, panel_d, fill="#444444", stroke="#444444")
+        if D > panel_d:
+            bw = min(W * 0.35, 360)
+            p.rect(W / 2 - bw / 2, panel_d, bw, D - panel_d, fill=TOP, sw=p.sw * 0.6)
+        return
     p.rect(0, 0, W, D)
     for i in range(1, 3):
         p.line(W * i / 3, 0, W * i / 3, D, sw=p.sw * 0.6)
     sw = min(W * 0.85, it.get("screen", 1600))
     p.rect(W / 2 - sw / 2, D - 70, sw, 40, fill="#444444", stroke="#444444")
+
+
+def screen(p, W, D, it):
+    """Vertical bars / slatted divider screen (bars seen in cross-section along W)."""
+    p.rect(0, 0, W, D, fill="none", stroke=INK, sw=p.sw * 0.45)
+    bar_w = float(it.get("bar_w", 40))
+    pitch = float(it.get("pitch", 85))
+    n = max(2, round((W - bar_w) / pitch) + 1)
+    step = (W - bar_w) / (n - 1)
+    for i in range(n):
+        p.rect(i * step, 0, bar_w, D, fill=TOP, stroke=INK, sw=p.sw * 0.6)
 
 
 def cabinet(p, W, D, it):
@@ -368,8 +387,15 @@ def amp(p, W, D, it):
 
 
 def guitar(p, W, D, it):
-    """Guitar on a stand, seen from above: body at the front, neck to the back."""
+    """Guitar on a stand, or wall-mounted (mount == 'wall' / D <= 200), seen from above."""
     cu = W / 2
+    if it.get("mount") == "wall" or D <= 200:
+        # Wall hanger plaque at the wall (v = D), hanger stem, and dashed overhead guitar silhouette
+        p.rect(cu - 55, D - 28, 110, 28, fill=TOP, sw=p.sw * 0.7)
+        p.line(cu, D - 28, cu, D * 0.48, sw=p.sw * 1.1)
+        p.ellipse(cu, D * 0.36, W * 0.44, D * 0.32, fill=SOFT, dash=f"{p.sw * 3:.0f} {p.sw * 2:.0f}")
+        p.rect(cu - 24, D * 0.24, 48, D * 0.30, fill=TOP, sw=p.sw * 0.6)
+        return
     p.rect(cu - 35, D * 0.5, 70, D * 0.45, fill=TOP)
     p.ellipse(cu, D * 0.18, W * 0.42, D * 0.16)
     p.ellipse(cu, D * 0.38, W * 0.32, D * 0.12)
@@ -451,6 +477,42 @@ def panel(p, W, D, it):
     p.rect(0, 0, W, D, fill="#e9e9e9", stroke="#666666")
 
 
+def sim_rig(p, W, D, it):
+    """Hybrid sim racing / flight sim cockpit (80/20 frame, bucket seat, wheel, pedals, HOTAS,
+    49-inch curved ultrawide monitor). User sits at low v (seat) facing +v (monitor)."""
+    cu = W / 2
+    p.rect(0, 0, W, D, fill="#f1ede6", dash=f"{p.sw * 5:.0f} {p.sw * 3:.0f}")    # rig mat / footprint
+    # 80/20 extrusion side rails + crossbars
+    rw = min(250.0, W * 0.24)
+    p.rect(cu - rw - 45, D * 0.08, 45, D * 0.84, fill=TOP)
+    p.rect(cu + rw, D * 0.08, 45, D * 0.84, fill=TOP)
+    p.rect(cu - rw, D * 0.12, 2 * rw, 45, fill=TOP)
+    p.rect(cu - rw, D * 0.86, 2 * rw, 45, fill=TOP)
+    # bucket seat (backrest bolster + cushion + side bolsters)
+    sw_ = min(500.0, W * 0.44)
+    p.rect(cu - sw_ / 2, D * 0.07, sw_, D * 0.36, fill=FILL, r=50)
+    p.rect(cu - sw_ / 2 + 55, D * 0.16, sw_ - 110, D * 0.25, fill=SOFT, r=30)
+    p.rect(cu - sw_ / 2 + 35, D * 0.08, sw_ - 70, D * 0.09, fill=TOP, r=30)
+    # side-mounted HOTAS (left throttle, right stick / shifter)
+    pod_w, pod_d = 110.0, 230.0
+    p.rect(cu - sw_ / 2 - pod_w - 20, D * 0.24, pod_w, pod_d, fill=TOP, r=20)
+    p.rect(cu - sw_ / 2 - pod_w + 5, D * 0.28, pod_w - 50, 90, fill=SOFT, r=10)
+    p.rect(cu + sw_ / 2 + 20, D * 0.24, pod_w, pod_d, fill=TOP, r=20)
+    p.circle(cu + sw_ / 2 + 20 + pod_w / 2, D * 0.31, 34, fill=SOFT)
+    # wheel deck bridge + DD wheel base + steering wheel rim
+    p.rect(cu - rw - 45, D * 0.58, 2 * rw + 90, 120, fill=TOP, r=15)
+    p.rect(cu - 85, D * 0.60, 170, 110, fill=FILL, r=15)
+    p.line(cu - 145, D * 0.56, cu + 145, D * 0.56, sw=p.sw * 2.2)
+    # pedal tray + 3 pedals
+    p.rect(cu - 210, D * 0.74, 420, 240, fill=TOP, r=15)
+    for ox in (-130, 0, 130):
+        p.rect(cu + ox - 32, D * 0.77, 64, 175, fill=SOFT, r=10)
+    # 49-inch curved ultrawide monitor at nose (v near D)
+    mw = min(W - 60, 1180.0)
+    x0, x1 = cu - mw / 2, cu + mw / 2
+    p.path(f"M {x0:.1f} {D - 175:.1f} Q {cu:.1f} {D - 25:.1f} {x1:.1f} {D - 175:.1f}", sw=p.sw * 2.8)
+
+
 SYMBOLS = {
     "bed": bed, "nightstand": nightstand, "sofa": sofa, "sofa_l": sofa_l, "armchair": armchair,
     "chair": chair, "stool": stool, "table": table, "round_table": round_table,
@@ -460,6 +522,7 @@ SYMBOLS = {
     "shower": shower, "tub": tub, "glass": glass, "drain": drain, "piano": piano, "bench": bench,
     "drums": drums, "amp": amp, "guitar": guitar, "rug": rug, "plant": plant, "tree": tree,
     "palm": palm, "car": car, "lounger": lounger, "daybed": daybed, "panel": panel,
+    "screen": screen, "sim_rig": sim_rig,
 }
 
 

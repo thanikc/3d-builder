@@ -629,6 +629,29 @@ class FurnitureSymbols(unittest.TestCase):
         self.assertEqual(count("wardrobe", "<rect", doors="mirror"), 2)  # carcass and door panel
         self.assertGreater(count("wardrobe", "<line", doors="mirror"), 4)  # leaf split and hatching
         self.assertGreater(count("appliance", "<circle", drum=True), count("appliance", "<circle"))
+        self.assertEqual(count("screen", "<rect"), 25)  # outline + 24 bars at the default 40 / 85 mm
+        self.assertEqual(count("screen", "<rect", bar_w=60, pitch=200), 1 + 11)
+        self.assertEqual(count("screen", "<rect", pitch=5000), 1 + 2)  # always at least two bars
+        self.assertEqual(count("guitar", "stroke-dasharray"), 0)  # on a stand
+        self.assertEqual(count("guitar", "stroke-dasharray", mount="wall"), 1)  # dashed overhead body
+        self.assertEqual(count("guitar", "<ellipse", mount="wall"), 1)
+
+    def test_shallow_tv_and_guitar_are_wall_mounted(self):
+        def draw(kind, d):
+            return "".join(fu.draw_item(dict(self.PIECE, type=kind, d=d), 50, 0.13))
+        flat, unit = draw("tv", 100), draw("tv", 450)
+        self.assertEqual(flat.count("<rect"), 2)  # panel and wall bracket
+        self.assertEqual(flat.count("<line"), 0)  # no media unit doors
+        self.assertGreater(unit.count("<line"), 0)
+        self.assertEqual(draw("tv", 40).count("<rect"), 1)  # panel only, no room for a bracket
+        self.assertIn("stroke-dasharray", draw("guitar", 200))
+        self.assertNotIn("stroke-dasharray", draw("guitar", 201))
+
+    def test_sim_rig_draws_seat_controls_and_curved_monitor(self):
+        out = "".join(fu.draw_item(dict(self.PIECE, type="sim_rig", w=1200, d=1700), 50, 0.13))
+        self.assertIn("stroke-dasharray", out)  # rig footprint
+        self.assertEqual(out.count("<path"), 1)  # curved ultrawide monitor
+        self.assertGreater(out.count("<rect"), 10)  # frame, seat, HOTAS, wheel base, pedals
         self.assertNotEqual(
             "".join(fu.draw_item(dict(self.PIECE, d=2000, type="sofa_l", return_side="left"), 50, 0.13)),
             "".join(fu.draw_item(dict(self.PIECE, d=2000, type="sofa_l", return_side="right"), 50, 0.13)))
